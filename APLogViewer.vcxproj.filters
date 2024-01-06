@@ -37,6 +37,12 @@
     <ClCompile Include="main.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="LogEntry.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="LogFile.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="imgui\imgui.h">
@@ -52,6 +58,12 @@
       <Filter>imgui_impl</Filter>
     </ClInclude>
     <ClInclude Include="common.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="LogEntry.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="LogFile.h">
       <Filter>Source Files</Filter>
     </ClInclude>
   </ItemGroup>

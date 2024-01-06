@@ -4,14 +4,27 @@
 // Formats supported:
 //
 // TODO
+// - Wrap the global string map into an object (factory)
+// - Add more UI to show the hierarchy of files
+// - Add field-based filtering
+//   - conditionals
+//   - values (csv ex. PID=123,488,999)
+//   - ranges (2020-01-04 - 2021-01-01) etc.
+// - UI to combine LogFile streams into a single view
+// - Remove console that spawns
 
 #include "common.h"
+#include "LogEntry.h"
+#include "LogFile.h"
+
 #include "imgui.h"
 #include "imgui_impl_win32.h"
 #include "imgui_impl_dx10.h"
 #include <d3d10_1.h>
 #include <d3d10.h>
 #include <tchar.h>
+
+using namespace APLogViewer;
 
 // Data
 static ID3D10Device *g_pd3dDevice = nullptr;
@@ -26,153 +39,19 @@ void CreateRenderTarget();
 void CleanupRenderTarget();
 LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
-typedef struct LogEntry {
-    char level;
-    u64 date_timestamp;
-    u64 service;
-    u64 tag;
-    u64 source_file;
-    u64 source_function;
-    i64 source_line;
-    i64 process_id;
-    i64 thread_id;
-    u64 timestamp;
-    u64 message_id;
-} LogEntry;
-
 std::unordered_map<u64, std::string> STRING_MAP;
-std::vector<LogEntry> ENTRIES;
 std::mutex GLOBAL_STATE_MUTEX;
 bool g_ReadInput = true;
 
-u64 hash(char *str)
+std::vector<LogFile *> log_files;
+
+u64 GetTotalLogCount()
 {
-    u64 hash = 5381;
-    int c;
-    while (c = *str++) {
-        hash = ((hash << 5) + hash) + c;
+    u64 total = 0;
+    for (i32 i = 0; i < log_files.size(); i++) {
+        total += log_files[i]->GetEntriesCount();
     }
-    return hash;
-}
-
-u64 map_upsert(std::string str)
-{
-    u64 h = hash((char *)str.c_str());
-    GLOBAL_STATE_MUTEX.lock();
-    auto search = STRING_MAP.find(h);
-    if (search == STRING_MAP.end()) {
-        STRING_MAP.insert({ h, str });
-    }
-    GLOBAL_STATE_MUTEX.unlock();
-    return h;
-}
-
-std::string get_string(u64 h)
-{
-    GLOBAL_STATE_MUTEX.lock();
-    auto search = STRING_MAP.find(h);
-	std::string result = search != STRING_MAP.end() ? search->second : std::string();
-    GLOBAL_STATE_MUTEX.unlock();
-    return result;
-}
-
-u64 parse_timestamp(std::string timestamp)
-{
-    u64 ts = 0;
-    int year, month, day, hour, minute, second;
-    int rc = sscanf(timestamp.c_str(), "%d/%d/%d %d:%d:%d",
-        &day, &month, &year, &hour, &minute, &second);
-    if (rc == 6) {
-        struct tm tt = { 0 };
-        tt.tm_year = year - 1900;
-        tt.tm_mon = month;
-        tt.tm_mday = day;
-        tt.tm_hour = hour;
-        tt.tm_min = minute;
-        tt.tm_sec = second;
-        ts = mktime(&tt);
-    }
-    return ts;
-}
-
-std::string ReadStringWithKey(const char *str, std::string key)
-{
-    char tkey[32];
-    snprintf(tkey, sizeof tkey, "%s=\"", key.c_str());
-    const char *s = strstr(str, tkey) + strlen(tkey);
-    const char *e = strchr(s, '"');
-    return std::string(s, e - s);
-}
-
-int ReadIntegerWithKey(const char *str, std::string key)
-{
-    char tkey[32];
-    snprintf(tkey, sizeof tkey, "%s=\"", key.c_str());
-    const char *s = strstr(str, tkey) + strlen(tkey);
-    return atoi(s);
-}
-
-void ReadAPLog(std::string path)
-{
-    std::ifstream file(path);
-    std::string str;
-
-    // i,11/28/2023 12:42:09,AzPubSubPerf,DefaultTag,SrcFile="" SrcFunc="" SrcLine="0" Pid="5640" Tid="2324" TS="0x01DA223B5BB194F2" String1="Setting azpubsub.kusto.log.level: 7"
-
-    while (g_ReadInput && std::getline(file, str)) {
-        // NOTE Make sure that each line ends in a '"'
-        // there's probably a better way to determine if we have a partial line or not...
-        if (str[str.length() - 1] != '"')
-            continue;
-
-        LogEntry log = { 0 };
-
-        const char *s = str.c_str();
-
-        std::string str(s);
-
-        log.level = s[0];
-        std::string date_timestamp = str.substr(2, sizeof("dd-mm-YYYY HH:MM:SS") - 1);
-        log.date_timestamp = parse_timestamp(date_timestamp);
-
-        const char *src1_ptr = s + 22;
-        size_t src1_len = strchr(src1_ptr, ',') - src1_ptr;
-        std::string service = str.substr(src1_ptr - s, src1_len);
-        log.service = map_upsert(service);
-
-        const char *src2_ptr = src1_ptr + src1_len + 1;
-        size_t src2_len = strchr(src2_ptr, ',') - src2_ptr;
-        std::string tag = str.substr(src2_ptr - s, src2_len);
-        log.tag = map_upsert(tag);
-
-        std::string source_file = ReadStringWithKey(s, "SrcFile");
-        log.source_file = map_upsert(source_file);
-        std::string source_function = ReadStringWithKey(s, "SrcFunc");
-        log.source_function = map_upsert(source_function);
-        log.source_line = ReadIntegerWithKey(s, "SrcLine");
-
-        log.process_id = ReadIntegerWithKey(s, "Pid");
-        log.thread_id = ReadIntegerWithKey(s, "Tid");
-
-        const char *string1 = strstr(s, "String1");
-        string1 += strlen("String1") + 1;
-
-        // copy everything but the first and last quotes
-
-        std::string message = str.substr(string1 + 1 - s, strlen(string1 + 1) - 1);
-        log.message_id = map_upsert(message);
-
-        GLOBAL_STATE_MUTEX.lock();
-        ENTRIES.push_back(log);
-        GLOBAL_STATE_MUTEX.unlock();
-    }
-}
-
-DWORD WINAPI ReadAllFiles(LPVOID arg)
-{
-    std::string file = *(std::string *)arg;
-    ReadAPLog(file);
-    return 0;
+    return total;
 }
 
 void RenderTable();
@@ -184,7 +63,7 @@ int main(int argc, char **argv)
     //ImGui_ImplWin32_EnableDpiAwareness();
     WNDCLASSEXW wc = { sizeof(wc), CS_CLASSDC, WndProc, 0L, 0L, GetModuleHandle(nullptr), nullptr, nullptr, nullptr, nullptr, L"ImGui Example", nullptr };
     ::RegisterClassExW(&wc);
-    HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"Dear ImGui DirectX10 Example", WS_OVERLAPPEDWINDOW, 100, 100, 1280, 800, nullptr, nullptr, wc.hInstance, nullptr);
+    HWND hwnd = ::CreateWindowW(wc.lpszClassName, L"APLogViewer", WS_OVERLAPPEDWINDOW, 100, 100, 1280, 800, nullptr, nullptr, wc.hInstance, nullptr);
 
     // Initialize Direct3D
     if (!CreateDeviceD3D(hwnd))
@@ -232,11 +111,13 @@ int main(int argc, char **argv)
     // Read all of the log entries
     std::vector<LogEntry> entries;
     std::string file;
-    HANDLE file_io_thread = nullptr;
 
     if (argc > 1) {
-        file = std::string(argv[1]);
-        file_io_thread = ::CreateThread(NULL, 0, ReadAllFiles, (LPVOID)&file, 0, nullptr);
+        for (i32 i = 1; i < argc; i++) {
+            LogFile *file = new LogFile(std::string(argv[i]), &g_ReadInput);
+            file->Start();
+            log_files.push_back(file);
+        }
     }
 
     // Our state
@@ -285,10 +166,12 @@ int main(int argc, char **argv)
             
             // TODO Window names should relate to what subsection of the logs you're looking at.
             if (ImGui::Begin("APLogViewer")) {
-                ImGui::Text("LOG ENTRIES: %ld", ENTRIES.size());
+                ImGui::Text("LOG ENTRIES: %ld", GetTotalLogCount());
                 RenderTable();
                 ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
             }
+
+            ImGui::End();
 
 #if 0
             ImGui::Begin("Hello, world!");                          // Create a window called "Hello, world!" and append into it.
@@ -305,8 +188,6 @@ int main(int argc, char **argv)
             ImGui::SameLine();
             ImGui::Text("counter = %d", counter);
 #endif
-
-            ImGui::End();
         }
 
         // Rendering
@@ -321,7 +202,6 @@ int main(int argc, char **argv)
     }
 
     g_ReadInput = false;
-    WaitForSingleObject(file_io_thread, INFINITE);
 
     ImGui_ImplDX10_Shutdown();
     ImGui_ImplWin32_Shutdown();
@@ -339,8 +219,6 @@ void RenderTable()
     const float TEXT_BASE_WIDTH = ImGui::CalcTextSize("A").x;
     const float TEXT_BASE_HEIGHT = ImGui::GetTextLineHeightWithSpacing();
 
-    ImGui::PushID("Table");
-
     ImGuiTableFlags flags =
         ImGuiTableFlags_NoBordersInBodyUntilResize
         | ImGuiTableFlags_RowBg
@@ -353,6 +231,8 @@ void RenderTable()
 	const int columns = 10;
 
     ImVec2 outer_size = ImVec2(0.0f, TEXT_BASE_HEIGHT * 30);
+
+    ImGui::PushID("Table");
 
     if (!ImGui::BeginTable("The Table", columns, flags, outer_size)) {
         ImGui::EndTable();
@@ -379,11 +259,13 @@ void RenderTable()
 
     GLOBAL_STATE_MUTEX.lock();
 
-    clipper.Begin((int)ENTRIES.size());
+    clipper.Begin(GetTotalLogCount());
 
     while (clipper.Step()) {
 		for (i64 row = clipper.DisplayStart; row < clipper.DisplayEnd; row++) {
-			LogEntry *entry = &ENTRIES[row];
+            // TODO we need some new UI for an entry
+            LogFile *file = log_files[0];
+			LogEntry *entry = &file->entries[row];
 
 			ImGui::TableNextRow();
 			int column = 0;
