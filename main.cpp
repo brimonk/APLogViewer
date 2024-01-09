@@ -330,8 +330,7 @@ void RenderTable(LogFile *file, ImVec2 size)
 			LogEntry *entry = &file->entries[row];
 
 			ImGui::TableNextColumn();
-            char levelbuf[2] = { entry->level, 0 };
-			ImGui::Text(levelbuf);
+			ImGui::Text("%c", entry->level);
 
 			ImGui::TableNextColumn();
             char timebuf[32] = { 0 };

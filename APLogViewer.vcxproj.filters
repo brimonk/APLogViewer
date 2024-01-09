@@ -66,5 +66,8 @@
     <ClInclude Include="LogFile.h">
       <Filter>Source Files</Filter>
     </ClInclude>
+    <ClInclude Include="StringView.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

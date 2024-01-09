@@ -2,6 +2,7 @@
 #define LOG_ENTRY_H
 
 #include "common.h"
+#include "StringView.h"
 
 namespace APLogViewer
 {
@@ -17,6 +18,8 @@ namespace APLogViewer
         i64 process_id;
         i64 thread_id;
         u64 timestamp;
+        u64 timestamp_ns;
+        StringView message;
         u64 message_id;
     
         LogEntry(char *s);
