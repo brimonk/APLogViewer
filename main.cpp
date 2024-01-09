@@ -293,7 +293,7 @@ void RenderTable(LogFile *file, ImVec2 size)
         | ImGuiTableFlags_ScrollX
         ;
 
-	const int columns = 11;
+	const int columns = 12;
 
     ImGui::PushID("Table");
 
@@ -315,6 +315,7 @@ void RenderTable(LogFile *file, ImVec2 size)
         ImGui::TableSetupColumn("Thread ID");
         ImGui::TableSetupColumn("TS");
         ImGui::TableSetupColumn("Message");
+        ImGui::TableSetupColumn("Message2");
 		ImGui::TableHeadersRow();
 	}
 
@@ -375,6 +376,10 @@ void RenderTable(LogFile *file, ImVec2 size)
 
 			ImGui::TableNextColumn();
             ImGui::Text(STRING_MAP[entry->message_id].c_str());
+
+            ImGui::TableNextColumn();
+            StringMap map = file->GetStringMap(entry->message);
+            ImGui::Text("%.*s", map.len, map.str);
 		}
 
 	}

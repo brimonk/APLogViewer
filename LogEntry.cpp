@@ -1,5 +1,6 @@
 #include "common.h"
 #include "LogEntry.h"
+#include "StringView.h"
 
 extern std::unordered_map<u64, std::string> STRING_MAP;
 extern std::mutex GLOBAL_STATE_MUTEX;
@@ -7,8 +8,6 @@ extern bool g_ReadInput;
 
 namespace APLogViewer
 {
-    extern std::vector<LogEntry> ENTRIES;
-
     u64 hash(char *str)
     {
         u64 hash = 5381;
@@ -102,7 +101,7 @@ namespace APLogViewer
         return atoi(s);
     }
 
-	LogEntry::LogEntry(char *s, size_t len)
+	LogEntry::LogEntry(char *s, size_t len, char *base)
 	{
         std::string str(s, len);
 
@@ -132,11 +131,16 @@ namespace APLogViewer
         this->timestamp = parse_hex_timestamp(s);
 
         const char *string1 = strstr(s, "String1");
-        string1 += strlen("String1") + 1;
+        string1 += strlen("String1") + 2;
 
         // copy everything but the first and last quotes
 
-        std::string message = str.substr(string1 + 1 - s, len - (size_t)(string1 + 1 - s));
+        std::string message = str.substr(string1 - s, len - (size_t)(string1 - s));
         this->message_id = map_upsert(message);
+
+        u64 offset = (u64)(string1 - base);
+        u64 length = (u64)(len - (u64)(string1 - s));
+
+        this->message = StringView(offset, length);
 	}
 }

@@ -19,10 +19,10 @@ namespace APLogViewer
         i64 thread_id;
         u64 timestamp;
         u64 timestamp_ns;
-        StringView message;
         u64 message_id;
+        StringView message;
     
-        LogEntry(char *s, size_t len);
+        LogEntry(char *s, size_t len, char *base);
     };
 
 }

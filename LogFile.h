@@ -2,6 +2,8 @@
 #define LOG_FILE_H
 
 #include "common.h"
+#include "StringView.h"
+#include "StringMap.h"
 
 namespace APLogViewer
 {
@@ -22,6 +24,8 @@ namespace APLogViewer
 		bool Start();
 		u64 GetEntriesCount();
 		void ReadAPLog();
+
+		StringMap GetStringMap(StringView view);
 
 	private:
 		size_t GetNextLineEnding(char *s, char *end);

@@ -1,6 +1,8 @@
 #include "common.h"
 #include "LogEntry.h"
 #include "LogFile.h"
+#include "StringView.h"
+#include "StringMap.h"
 
 namespace APLogViewer
 {
@@ -111,13 +113,13 @@ namespace APLogViewer
 
 	void LogFile::ReadAPLog()
 	{
-		const char *base = (const char *)this->mapping_base;
-		const char *end = base + this->file_size;
+		char *base = (char *)this->mapping_base;
+		char *end = base + this->file_size;
 		char *next = nullptr;
 
 		for (char *s = (char *)this->mapping_base; s < end; s = next) {
 			next = s + GetNextLineEnding(s, (char *)end);
-			LogEntry log(s, next - s - 1);
+			LogEntry log(s, next - s - 1, base);
 
 			this->entries_mutex.lock();
 			this->entries.push_back(log);
@@ -134,5 +136,10 @@ namespace APLogViewer
 		for (t = s; t < end && (*t != '\n' && *t != '\r'); t++)
 			;
 		return t - s;
+	}
+
+	StringMap LogFile::GetStringMap(StringView view)
+	{
+		return StringMap((char *)this->mapping_base, view);
 	}
 }
