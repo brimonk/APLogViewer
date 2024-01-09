@@ -45,11 +45,11 @@ namespace APLogViewer
         u64 ts = 0;
         int year, month, day, hour, minute, second;
         int rc = sscanf(timestamp.c_str(), "%d/%d/%d %d:%d:%d",
-            &day, &month, &year, &hour, &minute, &second);
+            &month, &day, &year, &hour, &minute, &second);
         if (rc == 6) {
             struct tm tt = { 0 };
             tt.tm_year = year - 1900;
-            tt.tm_mon = month;
+            tt.tm_mon = month - 1;
             tt.tm_mday = day;
             tt.tm_hour = hour;
             tt.tm_min = minute;
@@ -57,6 +57,28 @@ namespace APLogViewer
             ts = mktime(&tt);
         }
         return ts;
+    }
+
+    u64 parse_hex_timestamp(const char *str)
+    {
+#define WINDOWS_TICK 10000000
+#define SEC_TO_UNIX_EPOCH 11644473600LL
+
+        const char *key = "TS=\"";
+        char *s = (char *)strstr(str, key);
+        if (s) {
+            s += strlen(key);
+            u64 ticks = (u64)strtoll(s, nullptr, 16);
+            // convert to unix time
+
+            u64 unix_ts = (ticks / WINDOWS_TICK - SEC_TO_UNIX_EPOCH);
+            return unix_ts;
+        } else {
+            return 0;
+        }
+
+#undef WINDOWS_TICK
+#undef SEC_TO_UNIX_EPOCH
     }
 
     std::string ReadStringWithKey(const char *str, std::string key)
@@ -106,6 +128,8 @@ namespace APLogViewer
 
         this->process_id = ReadIntegerWithKey(s, "Pid");
         this->thread_id = ReadIntegerWithKey(s, "Tid");
+        
+        this->timestamp = parse_hex_timestamp(s);
 
         const char *string1 = strstr(s, "String1");
         string1 += strlen("String1") + 1;

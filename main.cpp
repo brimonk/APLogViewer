@@ -1,17 +1,17 @@
 // Brian Chrzanowski
 //
 // APLogViewer - A better log viewing tool
-// Formats supported:
 //
 // TODO
-// - Wrap the global string map into an object (factory)
-// - Add more UI to show the hierarchy of files
+// - Wrap the global string map into an object (factory).
+// - Add more UI to show the hierarchy of files.
 // - Add field-based filtering
 //   - conditionals
 //   - values (csv ex. PID=123,488,999)
 //   - ranges (2020-01-04 - 2021-01-01) etc.
-// - UI to combine LogFile streams into a single view
-// - Remove console that spawns
+// - UI to combine LogFile streams into a single view.
+// - Remove console that spawns.
+// - Fix more global destruction stuff
 
 #include "common.h"
 #include "LogEntry.h"
@@ -27,10 +27,10 @@
 using namespace APLogViewer;
 
 // Data
-static ID3D10Device *g_pd3dDevice = nullptr;
-static IDXGISwapChain *g_pSwapChain = nullptr;
+static ID3D10Device            *g_pd3dDevice = nullptr;
+static IDXGISwapChain          *g_pSwapChain = nullptr;
 static UINT                     g_ResizeWidth = 0, g_ResizeHeight = 0;
-static ID3D10RenderTargetView *g_mainRenderTargetView = nullptr;
+static ID3D10RenderTargetView  *g_mainRenderTargetView = nullptr;
 
 // Forward declarations of helper functions
 bool CreateDeviceD3D(HWND hWnd);
@@ -228,14 +228,13 @@ void RenderTable()
         | ImGuiTableFlags_ScrollY
         | ImGuiTableFlags_ScrollX;
 
-	const int columns = 10;
+	const int columns = 11;
 
     ImVec2 outer_size = ImVec2(0.0f, TEXT_BASE_HEIGHT * 30);
 
     ImGui::PushID("Table");
 
     if (!ImGui::BeginTable("The Table", columns, flags, outer_size)) {
-        ImGui::EndTable();
         ImGui::PopID();
         return;
     }
@@ -251,6 +250,7 @@ void RenderTable()
         ImGui::TableSetupColumn("Source Line");
         ImGui::TableSetupColumn("Process ID");
         ImGui::TableSetupColumn("Thread ID");
+        ImGui::TableSetupColumn("TS");
         ImGui::TableSetupColumn("Message");
 		ImGui::TableHeadersRow();
 	}
@@ -259,7 +259,7 @@ void RenderTable()
 
     GLOBAL_STATE_MUTEX.lock();
 
-    clipper.Begin(GetTotalLogCount());
+    clipper.Begin((int)GetTotalLogCount());
 
     while (clipper.Step()) {
 		for (i64 row = clipper.DisplayStart; row < clipper.DisplayEnd; row++) {
@@ -276,7 +276,7 @@ void RenderTable()
 
             ImGui::TableSetColumnIndex(column++);
             char timebuf[32] = { 0 };
-            struct tm *tmlocal = localtime((time_t *)&entry->date_timestamp);
+            struct tm *tmlocal = gmtime((time_t *)&entry->date_timestamp);
             if (tmlocal) {
                 strftime(timebuf, sizeof timebuf, "%Y-%m-%d %H:%M:%S", tmlocal);
                 ImGui::Text(timebuf);
@@ -304,6 +304,16 @@ void RenderTable()
 
             ImGui::TableSetColumnIndex(column++);
             ImGui::Text("%ld", entry->thread_id);
+
+            ImGui::TableSetColumnIndex(column++);
+            char tsbuf[32] = { 0 };
+            struct tm *tmts = gmtime((time_t *)&entry->timestamp);
+            if (tmts) {
+                strftime(tsbuf, sizeof tsbuf, "%Y-%m-%d %H:%M:%S", tmts);
+                ImGui::Text(timebuf);
+            } else {
+                ImGui::Text("N/A");
+            }
 
             ImGui::TableSetColumnIndex(column++);
             ImGui::Text(STRING_MAP[entry->message_id].c_str());
