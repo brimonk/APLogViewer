@@ -69,6 +69,19 @@ namespace APLogViewer
 				return;
 			}
 		}
+
+		{
+			LARGE_INTEGER size = { 0 };
+			bool rc = GetFileSizeEx(this->file_handle, &size);
+			if (!rc) {
+				// Couldn't get the size of the file :(
+				return;
+			}
+
+			this->file_size = (u64)size.QuadPart;
+		}
+
+		this->init_succeeded = true;
 	}
 
 	LogFile::~LogFile()
@@ -98,22 +111,28 @@ namespace APLogViewer
 
 	void LogFile::ReadAPLog()
 	{
-		std::ifstream file(this->path);
-		std::string str;
+		const char *base = (const char *)this->mapping_base;
+		const char *end = base + this->file_size;
+		char *next = nullptr;
 
-		// i,11/28/2023 12:42:09,AzPubSubPerf,DefaultTag,SrcFile="" SrcFunc="" SrcLine="0" Pid="5640" Tid="2324" TS="0x01DA223B5BB194F2" String1="Setting azpubsub.kusto.log.level: 7"
-
-		while (this->should_run && std::getline(file, str)) {
-			// NOTE Make sure that each line ends in a '"'
-			// there's probably a better way to determine if we have a partial line or not...
-			if (str[str.length() - 1] != '"')
-				continue;
-
-			LogEntry log((char *)str.c_str());
+		for (char *s = (char *)this->mapping_base; s < end; s = next) {
+			next = s + GetNextLineEnding(s, (char *)end);
+			LogEntry log(s, next - s - 1);
 
 			this->entries_mutex.lock();
 			this->entries.push_back(log);
 			this->entries_mutex.unlock();
+
+			while (isspace(*next))
+				next++;
 		}
+	}
+
+	size_t LogFile::GetNextLineEnding(char *s, char *end)
+	{
+		char *t;
+		for (t = s; t < end && (*t != '\n' && *t != '\r'); t++)
+			;
+		return t - s;
 	}
 }

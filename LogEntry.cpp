@@ -102,9 +102,9 @@ namespace APLogViewer
         return atoi(s);
     }
 
-	LogEntry::LogEntry(char *s)
+	LogEntry::LogEntry(char *s, size_t len)
 	{
-        std::string str(s);
+        std::string str(s, len);
 
         this->level = s[0];
         std::string date_timestamp = str.substr(2, sizeof("dd-mm-YYYY HH:MM:SS") - 1);
@@ -136,7 +136,7 @@ namespace APLogViewer
 
         // copy everything but the first and last quotes
 
-        std::string message = str.substr(string1 + 1 - s, strlen(string1 + 1) - 1);
+        std::string message = str.substr(string1 + 1 - s, len - (size_t)(string1 + 1 - s));
         this->message_id = map_upsert(message);
 	}
 }

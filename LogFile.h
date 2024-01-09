@@ -13,6 +13,8 @@ namespace APLogViewer
 		bool *should_run = nullptr;
 		std::vector<LogEntry> entries;
 		std::mutex entries_mutex;
+		bool init_succeeded = false;
+		u64 file_size;
 
 		LogFile(std::string path, bool *should_run);
 		~LogFile();
@@ -22,6 +24,8 @@ namespace APLogViewer
 		void ReadAPLog();
 
 	private:
+		size_t GetNextLineEnding(char *s, char *end);
+
 		HANDLE thread_handle = nullptr;
 		HANDLE file_handle = nullptr;
 		HANDLE file_mapping = nullptr;

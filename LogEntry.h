@@ -22,7 +22,7 @@ namespace APLogViewer
         StringView message;
         u64 message_id;
     
-        LogEntry(char *s);
+        LogEntry(char *s, size_t len);
     };
 
 }
