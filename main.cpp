@@ -4,14 +4,14 @@
 //
 // TODO
 // - Wrap the global string map into an object (factory).
-// - Add more UI to show the hierarchy of files.
-// - Add field-based filtering
+// - Add UI for filtering on all fields
 //   - conditionals
 //   - values (csv ex. PID=123,488,999)
 //   - ranges (2020-01-04 - 2021-01-01) etc.
 // - UI to combine LogFile streams into a single view.
 // - Remove console that spawns.
 // - Fix more global destruction stuff
+// - MemoryMap the Input Files
 
 #include "common.h"
 #include "LogEntry.h"
@@ -27,10 +27,10 @@
 using namespace APLogViewer;
 
 // Data
-static ID3D10Device            *g_pd3dDevice = nullptr;
-static IDXGISwapChain          *g_pSwapChain = nullptr;
-static UINT                     g_ResizeWidth = 0, g_ResizeHeight = 0;
-static ID3D10RenderTargetView  *g_mainRenderTargetView = nullptr;
+static ID3D10Device           *g_pd3dDevice = nullptr;
+static IDXGISwapChain         *g_pSwapChain = nullptr;
+static UINT                    g_ResizeWidth = 0, g_ResizeHeight = 0;
+static ID3D10RenderTargetView *g_mainRenderTargetView = nullptr;
 
 // Forward declarations of helper functions
 bool CreateDeviceD3D(HWND hWnd);
@@ -54,7 +54,8 @@ u64 GetTotalLogCount()
     return total;
 }
 
-void RenderTable();
+void RenderApp(std::vector<LogFile *> &files);
+void RenderTable(LogFile *file, ImVec2 size);
 
 // Main code
 int main(int argc, char **argv)
@@ -163,15 +164,8 @@ int main(int argc, char **argv)
         {
             static float f = 0.0f;
             static int counter = 0;
-            
-            // TODO Window names should relate to what subsection of the logs you're looking at.
-            if (ImGui::Begin("APLogViewer")) {
-                ImGui::Text("LOG ENTRIES: %ld", GetTotalLogCount());
-                RenderTable();
-                ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
-            }
 
-            ImGui::End();
+            RenderApp(log_files);
 
 #if 0
             ImGui::Begin("Hello, world!");                          // Create a window called "Hello, world!" and append into it.
@@ -214,7 +208,77 @@ int main(int argc, char **argv)
     return 0;
 }
 
-void RenderTable()
+void RenderApp(std::vector<LogFile *> &files)
+{
+    const float TEXT_BASE_WIDTH = ImGui::CalcTextSize("A").x;
+    const float TEXT_BASE_HEIGHT = ImGui::GetTextLineHeightWithSpacing();
+
+    ImGuiIO &io = ImGui::GetIO();
+
+    static bool use_work_area = true;
+
+    const ImGuiViewport *viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(use_work_area ? viewport->WorkPos : viewport->Pos);
+    ImGui::SetNextWindowSize(use_work_area ? viewport->WorkSize : viewport->Size);
+
+    ImGuiWindowFlags window_flags = ImGuiWindowFlags_MenuBar;
+
+    // TODO Window names should relate to what subsection of the logs you're looking at.
+    if (ImGui::Begin("APLogViewer", nullptr, window_flags)) {
+        if (ImGui::BeginMenuBar()) {
+            if (ImGui::BeginMenu("File")) {
+                ImGui::EndMenu();
+            }
+            ImGui::EndMenuBar();
+        }
+
+        static int selected = -1;
+        {
+            // Log File Source(s)
+            ImGui::BeginChild("Log Sources", ImVec2(150, 0), ImGuiChildFlags_Border | ImGuiChildFlags_ResizeX);
+            
+            for (i32 i = 0; i < files.size(); i++) {
+                char label[128];
+                snprintf(label, sizeof label, "%s", files[i]->filename.c_str());
+                if (ImGui::Selectable(label, selected == i))
+                    selected = i;
+            }
+            
+            ImGui::EndChild();
+        }
+
+        ImGui::SameLine();
+
+        {
+            ImVec2 logsize = use_work_area ? viewport->WorkPos : viewport->Pos;
+            logsize.x -= 150;
+
+            ImGui::BeginGroup();
+            ImGui::BeginChild("Table Stats / Filtering", ImVec2(0, TEXT_BASE_HEIGHT * 4), ImGuiChildFlags_Border | ImGuiChildFlags_ResizeY);
+
+            if (selected >= 0) {
+                ImGui::Text("Records: %ld", files[selected]->entries.size());
+            }
+            ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
+
+            ImGui::EndChild();
+
+            ImGui::BeginChild("Log Contents", ImVec2(0, 0), ImGuiChildFlags_Border | ImGuiChildFlags_ResizeY);
+
+            if (selected >= 0) {
+                RenderTable(files[selected], ImVec2(0, logsize.y));
+            }
+
+            ImGui::EndChild();
+
+            ImGui::EndGroup();
+        }
+    }
+
+    ImGui::End();
+}
+
+void RenderTable(LogFile *file, ImVec2 size)
 {
     const float TEXT_BASE_WIDTH = ImGui::CalcTextSize("A").x;
     const float TEXT_BASE_HEIGHT = ImGui::GetTextLineHeightWithSpacing();
@@ -226,15 +290,14 @@ void RenderTable()
         | ImGuiTableFlags_Reorderable
         | ImGuiTableFlags_Hideable
         | ImGuiTableFlags_ScrollY
-        | ImGuiTableFlags_ScrollX;
+        | ImGuiTableFlags_ScrollX
+        ;
 
 	const int columns = 11;
 
-    ImVec2 outer_size = ImVec2(0.0f, TEXT_BASE_HEIGHT * 30);
-
     ImGui::PushID("Table");
 
-    if (!ImGui::BeginTable("The Table", columns, flags, outer_size)) {
+    if (!ImGui::BeginTable("The Table", columns, flags, size)) {
         ImGui::PopID();
         return;
     }
@@ -264,17 +327,13 @@ void RenderTable()
     while (clipper.Step()) {
 		for (i64 row = clipper.DisplayStart; row < clipper.DisplayEnd; row++) {
             // TODO we need some new UI for an entry
-            LogFile *file = log_files[0];
 			LogEntry *entry = &file->entries[row];
 
-			ImGui::TableNextRow();
-			int column = 0;
-
-			ImGui::TableSetColumnIndex(column++);
+			ImGui::TableNextColumn();
             char levelbuf[2] = { entry->level, 0 };
 			ImGui::Text(levelbuf);
 
-            ImGui::TableSetColumnIndex(column++);
+			ImGui::TableNextColumn();
             char timebuf[32] = { 0 };
             struct tm *tmlocal = gmtime((time_t *)&entry->date_timestamp);
             if (tmlocal) {
@@ -284,28 +343,28 @@ void RenderTable()
                 ImGui::Text("N/A");
             }
 
-            ImGui::TableSetColumnIndex(column++);
+			ImGui::TableNextColumn();
             ImGui::Text(STRING_MAP[entry->service].c_str());
 
-            ImGui::TableSetColumnIndex(column++);
+			ImGui::TableNextColumn();
             ImGui::Text(STRING_MAP[entry->tag].c_str());
 
-            ImGui::TableSetColumnIndex(column++);
+			ImGui::TableNextColumn();
             ImGui::Text(STRING_MAP[entry->source_file].c_str());
 
-            ImGui::TableSetColumnIndex(column++);
+			ImGui::TableNextColumn();
             ImGui::Text(STRING_MAP[entry->source_function].c_str());
 
-            ImGui::TableSetColumnIndex(column++);
+			ImGui::TableNextColumn();
             ImGui::Text("%ld", entry->source_line);
 
-            ImGui::TableSetColumnIndex(column++);
+			ImGui::TableNextColumn();
             ImGui::Text("%ld", entry->process_id);
 
-            ImGui::TableSetColumnIndex(column++);
+			ImGui::TableNextColumn();
             ImGui::Text("%ld", entry->thread_id);
 
-            ImGui::TableSetColumnIndex(column++);
+			ImGui::TableNextColumn();
             char tsbuf[32] = { 0 };
             struct tm *tmts = gmtime((time_t *)&entry->timestamp);
             if (tmts) {
@@ -315,7 +374,7 @@ void RenderTable()
                 ImGui::Text("N/A");
             }
 
-            ImGui::TableSetColumnIndex(column++);
+			ImGui::TableNextColumn();
             ImGui::Text(STRING_MAP[entry->message_id].c_str());
 		}
 

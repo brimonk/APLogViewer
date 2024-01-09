@@ -14,6 +14,7 @@ namespace APLogViewer
 	LogFile::LogFile(std::string path, bool *should_run)
 	{
 		this->path = path;
+		this->filename = path.substr(path.find_last_of("/\\") + 1);
 		this->should_run = should_run;
 	}
 

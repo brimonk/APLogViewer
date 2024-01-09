@@ -9,6 +9,7 @@ namespace APLogViewer
 	{
 	public:
 		std::string path;
+		std::string filename;
 		bool *should_run = nullptr;
 		std::vector<LogEntry> entries;
 		std::mutex entries_mutex;
