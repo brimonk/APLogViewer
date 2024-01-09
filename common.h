@@ -12,6 +12,7 @@
 #include <limits.h>
 #include <assert.h>
 
+#include <iostream>
 #include <string>
 #include <vector>
 #include <fstream>

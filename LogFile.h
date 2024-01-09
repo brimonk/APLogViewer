@@ -23,6 +23,9 @@ namespace APLogViewer
 
 	private:
 		HANDLE thread_handle = nullptr;
+		HANDLE file_handle = nullptr;
+		HANDLE file_mapping = nullptr;
+		LPVOID mapping_base = nullptr;
 	};
 }
 
