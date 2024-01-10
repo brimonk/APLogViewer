@@ -108,6 +108,7 @@ namespace APLogViewer
 		this->entries_mutex.lock();
 		u64 value = this->entries.size();
 		this->entries_mutex.unlock();
+
 		return value;
 	}
 

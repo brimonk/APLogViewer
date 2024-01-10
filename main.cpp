@@ -39,8 +39,6 @@ void CreateRenderTarget();
 void CleanupRenderTarget();
 LRESULT WINAPI WndProc(HWND hWnd, UINT msg, WPARAM wParam, LPARAM lParam);
 
-std::unordered_map<u64, std::string> STRING_MAP;
-std::mutex GLOBAL_STATE_MUTEX;
 bool g_ReadInput = true;
 
 std::vector<LogFile *> log_files;
@@ -257,7 +255,12 @@ void RenderApp(std::vector<LogFile *> &files)
             ImGui::BeginChild("Table Stats / Filtering", ImVec2(0, TEXT_BASE_HEIGHT * 4), ImGuiChildFlags_Border | ImGuiChildFlags_ResizeY);
 
             if (selected >= 0) {
-                ImGui::Text("Records: %ld", files[selected]->entries.size());
+                static i64 records_last_frame = 0;
+                i64 records_this_frame = (i64)files[selected]->GetEntriesCount();
+
+                ImGui::Text("Records: %ld (%ld recs/frame)", records_this_frame, records_this_frame - records_last_frame);
+
+                records_last_frame = records_this_frame;
             }
             ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
 
@@ -293,7 +296,7 @@ void RenderTable(LogFile *file, ImVec2 size)
         | ImGuiTableFlags_ScrollX
         ;
 
-	const int columns = 12;
+	const int columns = 11;
 
     ImGui::PushID("Table");
 
@@ -315,13 +318,10 @@ void RenderTable(LogFile *file, ImVec2 size)
         ImGui::TableSetupColumn("Thread ID");
         ImGui::TableSetupColumn("TS");
         ImGui::TableSetupColumn("Message");
-        ImGui::TableSetupColumn("Message2");
 		ImGui::TableHeadersRow();
 	}
 
     ImGuiListClipper clipper;
-
-    GLOBAL_STATE_MUTEX.lock();
 
     clipper.Begin((int)GetTotalLogCount());
 
@@ -344,16 +344,20 @@ void RenderTable(LogFile *file, ImVec2 size)
             }
 
 			ImGui::TableNextColumn();
-            ImGui::Text(STRING_MAP[entry->service].c_str());
+            StringMap m0 = file->GetStringMap(entry->service);
+            ImGui::Text("%.*s", m0.len, m0.str);
 
 			ImGui::TableNextColumn();
-            ImGui::Text(STRING_MAP[entry->tag].c_str());
+            StringMap m1 = file->GetStringMap(entry->service);
+            ImGui::Text("%.*s", m1.len, m1.str);
 
 			ImGui::TableNextColumn();
-            ImGui::Text(STRING_MAP[entry->source_file].c_str());
+            StringMap m2 = file->GetStringMap(entry->service);
+            ImGui::Text("%.*s", m2.len, m2.str);
 
 			ImGui::TableNextColumn();
-            ImGui::Text(STRING_MAP[entry->source_function].c_str());
+            StringMap m3 = file->GetStringMap(entry->service);
+            ImGui::Text("%.*s", m3.len, m3.str);
 
 			ImGui::TableNextColumn();
             ImGui::Text("%ld", entry->source_line);
@@ -374,17 +378,11 @@ void RenderTable(LogFile *file, ImVec2 size)
                 ImGui::Text("N/A");
             }
 
-			ImGui::TableNextColumn();
-            ImGui::Text(STRING_MAP[entry->message_id].c_str());
-
             ImGui::TableNextColumn();
-            StringMap map = file->GetStringMap(entry->message);
-            ImGui::Text("%.*s", map.len, map.str);
+            StringMap m4 = file->GetStringMap(entry->message);
+            ImGui::Text("%.*s", m4.len, m4.str);
 		}
-
 	}
-
-    GLOBAL_STATE_MUTEX.unlock();
 
     ImGui::EndTable();
 
