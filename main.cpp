@@ -16,6 +16,7 @@
 #include "common.h"
 #include "LogEntry.h"
 #include "LogFile.h"
+#include "dirent.h"
 
 #include "imgui.h"
 #include "imgui_impl_win32.h"
@@ -111,11 +112,29 @@ int main(int argc, char **argv)
     std::vector<LogEntry> entries;
     std::string file;
 
-    if (argc > 1) {
-        for (i32 i = 1; i < argc; i++) {
-            LogFile *file = new LogFile(std::string(argv[i]), &g_ReadInput);
-            file->Start();
-            log_files.push_back(file);
+    for (i32 i = 1; i < argc; i++) {
+        struct stat s;
+        if (stat(argv[i], &s) == 0) {
+            if (s.st_mode & S_IFDIR) {
+                DIR *dir;
+                struct dirent *ent;
+                if ((dir = opendir(argv[i])) != NULL) {
+                    while ((ent = readdir(dir)) != NULL) {
+                        if (ent->d_type != DT_REG)
+                            continue;
+
+                        LogFile *file = new LogFile(std::string(ent->d_name), &g_ReadInput);
+                        file->Start();
+                        log_files.push_back(file);
+                    }
+                }
+            } else if (s.st_mode & S_IFREG) {
+                LogFile *file = new LogFile(std::string(argv[i]), &g_ReadInput);
+                file->Start();
+                log_files.push_back(file);
+            }
+        } else {
+            // TODO print error in some way
         }
     }
 
