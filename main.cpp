@@ -344,6 +344,8 @@ void RenderTable(LogFile *file, ImVec2 size)
 
     clipper.Begin((int)GetTotalLogCount());
 
+    file->Lock();
+
     while (clipper.Step()) {
 		for (i64 row = clipper.DisplayStart; row < clipper.DisplayEnd; row++) {
             // TODO we need some new UI for an entry
@@ -402,6 +404,8 @@ void RenderTable(LogFile *file, ImVec2 size)
             ImGui::Text("%.*s", m4.len, m4.str);
 		}
 	}
+
+    file->Unlock();
 
     ImGui::EndTable();
 

@@ -12,12 +12,14 @@
 #include <limits.h>
 #include <assert.h>
 
+#ifdef __cplusplus
 #include <iostream>
 #include <string>
 #include <vector>
 #include <fstream>
 #include <unordered_map>
 #include <mutex>
+#endif // __cplusplus
 
 #include <windows.h>
 
@@ -39,5 +41,8 @@ typedef double     f64;
 #define SWAP(a, b) do { typeof((a)) z_ = (b); (b) = (a); (a) = z_; } while (0);
 
 #define streq(a, b) (strcmp((a), (b)) == 0 && strlen((a)) == strlen((b)))
+
+#define ERR(fmt, ...)  fprintf(stderr, "ERR: " fmt "\n", __VA_ARGS__)
+#define LOG(fmt, ...)  fprintf(stderr, "LOG: " fmt "\n", __VA_ARGS__)
 
 #endif // COMMON_H_

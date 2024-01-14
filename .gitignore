@@ -399,3 +399,5 @@ FodyWeavers.xsd
 
 # ignore imgui.ini
 imgui.ini
+
+*.exe

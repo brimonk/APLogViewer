@@ -16,6 +16,7 @@ namespace APLogViewer
 		std::vector<LogEntry> entries;
 		std::mutex entries_mutex;
 		bool init_succeeded = false;
+		u64 bytes_read;
 		u64 file_size;
 
 		LogFile(std::string path, bool *should_run);
@@ -25,11 +26,20 @@ namespace APLogViewer
 		u64 GetEntriesCount();
 		void ReadAPLog();
 
+		void WaitForChangesUntilFinished();
+
+		void SetupFileMapping();
+		void CloseFileMapping();
+
+		void Lock();
+		void Unlock();
+
 		StringMap GetStringMap(StringView view);
 
 	private:
 		size_t GetNextLineEnding(char *s, char *end);
 
+		HANDLE change_notifier = nullptr;
 		HANDLE thread_handle = nullptr;
 		HANDLE file_handle = nullptr;
 		HANDLE file_mapping = nullptr;

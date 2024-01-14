@@ -8,8 +8,41 @@ namespace APLogViewer
 {
 	DWORD WINAPI ThreadFunction(LPVOID arg)
 	{
+		// NOTE (Brian)
+		//
+		// We want to be able to reload files whenever they change by someone else.
+		//
+		// According to the Win32 API:
+		//
+		//     After a file mapping object is created, the size of the file must not exceed the size
+		//     of the file mapping object; if it does, not all of the file contents are available
+		//     for sharing.
+		// 
+		//     If an application specifies a size for the file mapping object that is larger than
+		//     the size of the actual named file on disk and if the page protection allows write
+		//     access (that is, the flProtect parameter specifies PAGE_READWRITE or
+		//     PAGE_EXECUTE_READWRITE), then the file on disk is increased to match the specified
+		//     size of the file mapping object. If the file is extended, the contents of the file
+		//     between the old end of the file and the new end of the file are not guaranteed to be
+		//     zero; the behavior is defined by the file system. If the file on disk cannot be
+		//     increased, CreateFileMapping fails and GetLastError returns ERROR_DISK_FULL.
+		//
+		// Given this, the "simplest way" to solve this problem is to have this thread hang around
+		// (remember, we create one for every LogFile object), and when the file change notification
+		// goes off, we resize our mapping of the file, and parse it starting from the end.
+		//
+		// This (should be) fine in every single case because our "strings" are actually StringView
+		// objects, which are just an offset and a length into the map. Given this, even if Windows
+		// gives us a new base pointer, our strings should continue to work just fine.
+		//
+		// This is, of course, predicated on the idea that only append operations happen. There's
+		// never any writes in the middle - according to the APLog spec (source: eng.ms), the
+		// logging system will write a _new_ file, with more digits appended at the end.
+
 		LogFile *log_file = reinterpret_cast<LogFile *>(arg);
 		log_file->ReadAPLog();
+		log_file->WaitForChangesUntilFinished();
+
 		return 0;
 	}
 
@@ -19,20 +52,33 @@ namespace APLogViewer
 		this->filename = path.substr(path.find_last_of("/\\") + 1);
 		this->should_run = should_run;
 
-		std::wstring wpath = std::wstring(this->path.begin(), this->path.end());
+		SetupFileMapping();
 
-		// NOTE We only open these files for reading both during CreateFile, and
-		// CreateFileMapping. We don't want to accidentally WRECK our log files.
+		this->init_succeeded = true;
+	}
+
+	void LogFile::SetupFileMapping()
+	{
+		std::wstring wpath = std::wstring(this->path.begin(), this->path.end());
 
 		// NOTE I think one of the best ways to handle this error is to have some
 		// kind of UI element (big red exclamation mark) with the actual WIN32
 		// error code or something that just has this error on display.
 
 		{
+			// NOTE We can share files under all circumstances(?) (TESTING)
+			//
+			// If we DON'T share files under all circumstances, other processes on the machine that
+			// request write/delete operations will be prevented from doing so.
+			//
+			// We don't want to prevent any AP machine from functioning normally (writing logs in
+			// this case), we want to just observe what's happening through logs.
+			DWORD share_mode = FILE_SHARE_READ|FILE_SHARE_WRITE|FILE_SHARE_DELETE;
+
 			this->file_handle = ::CreateFile(
 				wpath.c_str(),
 				GENERIC_READ,
-				FILE_SHARE_READ,
+				share_mode,
 				nullptr,
 				OPEN_EXISTING,
 				FILE_ATTRIBUTE_NORMAL,
@@ -43,6 +89,9 @@ namespace APLogViewer
 				return;
 			}
 		}
+
+		// TODO (Brian)
+		// - detect empty files and prevent mapping them
 
 		{
 			this->file_mapping = ::CreateFileMapping(
@@ -83,14 +132,35 @@ namespace APLogViewer
 			this->file_size = (u64)size.QuadPart;
 		}
 
-		this->init_succeeded = true;
+		{
+			// Get a change notification handle for this file specifically.
+
+			// NOTE We watch for every single event, but we only really expect to see size changes.
+			DWORD filter = FILE_NOTIFY_CHANGE_FILE_NAME
+				| FILE_NOTIFY_CHANGE_DIR_NAME|FILE_NOTIFY_CHANGE_ATTRIBUTES
+				| FILE_NOTIFY_CHANGE_SIZE|FILE_NOTIFY_CHANGE_LAST_WRITE
+				| FILE_NOTIFY_CHANGE_SECURITY;
+
+			// TODO Make sure we actually pass the entire path.
+			// TESTING We pass the current directory
+
+			this->change_notifier = FindFirstChangeNotification(L".\\", false, filter);
+
+			if (this->change_notifier == INVALID_HANDLE_VALUE) {
+				ERR("We got some error! %u", GetLastError());
+			}
+		}
+
 	}
 
 	LogFile::~LogFile()
 	{
-		*this->should_run = false;
 		::WaitForSingleObject(this->thread_handle, INFINITE);
+		CloseFileMapping();
+	}
 
+	void LogFile::CloseFileMapping()
+	{
 		::UnmapViewOfFile(this->mapping_base);
 
 		::CloseHandle(this->file_mapping);
@@ -118,7 +188,7 @@ namespace APLogViewer
 		char *end = base + this->file_size;
 		char *next = nullptr;
 
-		for (char *s = (char *)this->mapping_base; s < end; s = next) {
+		for (char *s = (char *)this->mapping_base + this->bytes_read; *this->should_run && s < end; s = next) {
 			next = s + GetNextLineEnding(s, (char *)end);
 			LogEntry log(s, next - s - 1, base);
 
@@ -128,7 +198,36 @@ namespace APLogViewer
 
 			while (isspace(*next))
 				next++;
+
+			this->bytes_read = next - (char *)this->mapping_base;
 		}
+	}
+
+	void LogFile::WaitForChangesUntilFinished()
+	{
+		while (*this->should_run) {
+			DWORD rc = WaitForSingleObject(this->change_notifier, 50);
+			if (rc == WAIT_OBJECT_0) {
+				LOG("The file has changed!");
+				Lock();
+				CloseFileMapping();
+				SetupFileMapping();
+				Unlock();
+				ReadAPLog();
+			} else if (rc == WAIT_TIMEOUT) {
+				LOG("Timeout happened");
+			}
+		}
+	}
+
+	void LogFile::Lock()
+	{
+		entries_mutex.lock();
+	}
+
+	void LogFile::Unlock()
+	{
+		entries_mutex.unlock();
 	}
 
 	size_t LogFile::GetNextLineEnding(char *s, char *end)
