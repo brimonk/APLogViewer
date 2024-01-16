@@ -208,14 +208,15 @@ namespace APLogViewer
 		while (*this->should_run) {
 			DWORD rc = WaitForSingleObject(this->change_notifier, 50);
 			if (rc == WAIT_OBJECT_0) {
-				LOG("The file has changed!");
+				// Before we can actually remap the file, we need to determine if _this_ is
+				// the file that changed...
+
 				Lock();
 				CloseFileMapping();
 				SetupFileMapping();
 				Unlock();
 				ReadAPLog();
 			} else if (rc == WAIT_TIMEOUT) {
-				LOG("Timeout happened");
 			}
 		}
 	}
