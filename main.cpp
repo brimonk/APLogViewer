@@ -337,6 +337,9 @@ void RenderTable(LogFile *file, ImVec2 size)
         ImGui::TableSetupColumn("Thread ID");
         ImGui::TableSetupColumn("TS");
         ImGui::TableSetupColumn("Message");
+
+        ImGui::TableSetupScrollFreeze(11, 1);
+
 		ImGui::TableHeadersRow();
 	}
 
