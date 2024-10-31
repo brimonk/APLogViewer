@@ -271,7 +271,7 @@ void RenderApp(std::vector<LogFile *> &files)
             logsize.x -= 150;
 
             ImGui::BeginGroup();
-            ImGui::BeginChild("Table Stats / Filtering", ImVec2(0, TEXT_BASE_HEIGHT * 4), ImGuiChildFlags_Border | ImGuiChildFlags_ResizeY);
+            ImGui::BeginChild("Table Stats / Filtering", ImVec2(0, TEXT_BASE_HEIGHT * 4), ImGuiChildFlags_Border);
 
             if (selected >= 0) {
                 static i64 records_last_frame = 0;
@@ -285,7 +285,7 @@ void RenderApp(std::vector<LogFile *> &files)
 
             ImGui::EndChild();
 
-            ImGui::BeginChild("Log Contents", ImVec2(0, 0), ImGuiChildFlags_Border | ImGuiChildFlags_ResizeY);
+            ImGui::BeginChild("Log Contents", ImVec2(0, logsize.y), ImGuiChildFlags_Border);
 
             if (selected >= 0) {
                 RenderTable(files[selected], ImVec2(0, logsize.y));
@@ -333,12 +333,12 @@ void RenderTable(LogFile *file, ImVec2 size)
         ImGui::TableSetupColumn("Source File");
         ImGui::TableSetupColumn("Source Function");
         ImGui::TableSetupColumn("Source Line");
-        ImGui::TableSetupColumn("Process ID");
-        ImGui::TableSetupColumn("Thread ID");
+        ImGui::TableSetupColumn("PID");
+        ImGui::TableSetupColumn("TID");
         ImGui::TableSetupColumn("TS");
         ImGui::TableSetupColumn("Message");
 
-        ImGui::TableSetupScrollFreeze(11, 1);
+        ImGui::TableSetupScrollFreeze(columns, 1);
 
 		ImGui::TableHeadersRow();
 	}
