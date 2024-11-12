@@ -49,6 +49,9 @@
     <ClCompile Include="StringMap.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="ImGuiFileDialog.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="imgui\imgui.h">
@@ -79,6 +82,12 @@
       <Filter>Source Files</Filter>
     </ClInclude>
     <ClInclude Include="dirent.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ImGuiFileDialog.h">
+      <Filter>Source Files</Filter>
+    </ClInclude>
+    <ClInclude Include="ImGuiFileDialogConfig.h">
       <Filter>Source Files</Filter>
     </ClInclude>
   </ItemGroup>

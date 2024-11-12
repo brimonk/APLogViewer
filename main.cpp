@@ -25,6 +25,16 @@
 #include <d3d10.h>
 #include <tchar.h>
 
+#include "ImGuiFileDialog.h"
+#include "ImGuiFileDialogConfig.h"
+
+const char kPathSeparator =
+#ifdef _WIN32
+'\\';
+#else
+'/';
+#endif
+
 using namespace APLogViewer;
 
 typedef struct StartupArgs {
@@ -61,28 +71,35 @@ u64 GetTotalLogCount()
 void RenderApp(std::vector<LogFile *> &files);
 void RenderTable(LogFile *file, ImVec2 size);
 
-void LoadLogs(int argc, char **argv)
+void AddFile(std::string path)
 {
-    for (i32 i = 0; i < argc && g_ReadInput; i++) {
+    LogFile* file = new LogFile(path, &g_ReadInput);
+    file->Start();
+    log_files.push_back(file);
+}
+
+void LoadLogs(std::vector<std::string> argv)
+{
+    for (i32 i = 0; i < argv.size() && g_ReadInput; i++) {
         struct stat s;
-        if (stat(argv[i], &s) == 0) {
+        if (stat(argv[i].c_str(), &s) == 0) {
             if (s.st_mode & S_IFDIR) {
                 DIR* dir;
                 struct dirent* ent;
-                if ((dir = opendir(argv[i])) != NULL) {
+                if ((dir = opendir(argv[i].c_str())) != NULL) {
                     while ((ent = readdir(dir)) != NULL) {
                         if (ent->d_type != DT_REG)
                             continue;
 
-                        LogFile* file = new LogFile(std::string(argv[i]) + std::string(ent->d_name), &g_ReadInput);
-                        file->Start();
-                        log_files.push_back(file);
+                        std::string use_me = argv[i];
+                        if (use_me[argv[i].length() - 1] != kPathSeparator)
+                            use_me = argv[i] + kPathSeparator;
+
+                        AddFile(use_me + std::string(ent->d_name));
                     }
                 }
             } else if (s.st_mode & S_IFREG) {
-                LogFile* file = new LogFile(std::string(argv[i]), &g_ReadInput);
-                file->Start();
-                log_files.push_back(file);
+                AddFile(std::string(argv[i]));
             }
         } else {
             // TODO print error in some way
@@ -93,7 +110,11 @@ void LoadLogs(int argc, char **argv)
 DWORD WINAPI ThreadedLoadLogs(LPVOID arg)
 {
     StartupArgs* a = (StartupArgs*)arg;
-    LoadLogs(a->argc, a->argv);
+    std::vector<std::string> paths;
+    for (int i = 0; i < a->argc; i++) {
+        paths.push_back(std::string(a->argv[i]));
+    }
+    LoadLogs(paths);
     return 0;
 }
 
@@ -254,12 +275,26 @@ void RenderApp(std::vector<LogFile *> &files)
     ImGui::SetNextWindowPos(use_work_area ? viewport->WorkPos : viewport->Pos);
     ImGui::SetNextWindowSize(use_work_area ? viewport->WorkSize : viewport->Size);
 
-    ImGuiWindowFlags window_flags = ImGuiWindowFlags_MenuBar|ImGuiWindowFlags_HorizontalScrollbar;
+    ImGuiWindowFlags window_flags = ImGuiWindowFlags_MenuBar|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_HorizontalScrollbar;
 
     // TODO Window names should relate to what subsection of the logs you're looking at.
     if (ImGui::Begin("APLogViewer", nullptr, window_flags)) {
         if (ImGui::BeginMenuBar()) {
             if (ImGui::BeginMenu("File")) {
+
+                // Open a file dialog to add files not added from the command line
+                if (ImGui::MenuItem("Add File...")) {
+                    IGFD::FileDialogConfig config;
+                    config.path = ".";
+                    ImGuiFileDialog::Instance()->OpenDialog("ChooseFileDlgKey", "Choose File", ".log,*", config);
+                }
+
+                if (ImGui::MenuItem("Add Directory...")) {
+                    IGFD::FileDialogConfig config;
+                    config.path = ".";
+                    ImGuiFileDialog::Instance()->OpenDialog("ChooseDirectoryDlgKey", "Choose Directory", nullptr, config);
+                }
+
                 ImGui::EndMenu();
             }
             ImGui::EndMenuBar();
@@ -319,6 +354,26 @@ void RenderApp(std::vector<LogFile *> &files)
 
             ImGui::EndGroup();
         }
+    }
+
+    if (ImGuiFileDialog::Instance()->Display("ChooseFileDlgKey")) {
+        if (ImGuiFileDialog::Instance()->IsOk()) { // action if OK
+            std::string filePathName = ImGuiFileDialog::Instance()->GetFilePathName();
+            AddFile(filePathName);
+        }
+
+        // close
+        ImGuiFileDialog::Instance()->Close();
+    }
+
+    if (ImGuiFileDialog::Instance()->Display("ChooseDirectoryDlgKey")) {
+        if (ImGuiFileDialog::Instance()->IsOk()) { // action if OK
+            std::string filePathName = ImGuiFileDialog::Instance()->GetCurrentPath();
+            LoadLogs(std::vector<std::string> { filePathName });
+        }
+
+        // close
+        ImGuiFileDialog::Instance()->Close();
     }
 
     ImGui::End();
@@ -391,8 +446,7 @@ void RenderTable(LogFile *file, ImVec2 size)
                 if (tmlocal) {
                     strftime(timebuf, sizeof timebuf, "%Y-%m-%d %H:%M:%S", tmlocal);
                     ImGui::Text(timebuf);
-                }
-                else {
+                } else {
                     ImGui::Text("N/A");
                 }
 
