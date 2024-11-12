@@ -367,11 +367,13 @@ void RenderTable(LogFile *file, ImVec2 size)
 		ImGui::TableHeadersRow();
 	}
 
-    if (file->GetEntriesCount() > 0) {
+    int records = file->GetEntriesCount();
+
+    if (records > 0) {
 
         ImGuiListClipper clipper;
 
-        clipper.Begin((int)GetTotalLogCount());
+        clipper.Begin(records);
 
         file->Lock();
 
