@@ -13,6 +13,7 @@ namespace APLogViewer
 		std::string path;
 		std::string filename;
 		bool *should_run = nullptr;
+		bool active = false;
 		std::vector<LogEntry> entries;
 		std::mutex entries_mutex;
 		bool init_succeeded = false;

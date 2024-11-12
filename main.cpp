@@ -27,6 +27,11 @@
 
 using namespace APLogViewer;
 
+typedef struct StartupArgs {
+    int argc;
+    char** argv;
+} StartupArgs;
+
 // Data
 static ID3D10Device           *g_pd3dDevice = nullptr;
 static IDXGISwapChain         *g_pSwapChain = nullptr;
@@ -55,6 +60,42 @@ u64 GetTotalLogCount()
 
 void RenderApp(std::vector<LogFile *> &files);
 void RenderTable(LogFile *file, ImVec2 size);
+
+void LoadLogs(int argc, char **argv)
+{
+    for (i32 i = 0; i < argc && g_ReadInput; i++) {
+        struct stat s;
+        if (stat(argv[i], &s) == 0) {
+            if (s.st_mode & S_IFDIR) {
+                DIR* dir;
+                struct dirent* ent;
+                if ((dir = opendir(argv[i])) != NULL) {
+                    while ((ent = readdir(dir)) != NULL) {
+                        if (ent->d_type != DT_REG)
+                            continue;
+
+                        LogFile* file = new LogFile(std::string(argv[i]) + std::string(ent->d_name), &g_ReadInput);
+                        file->Start();
+                        log_files.push_back(file);
+                    }
+                }
+            } else if (s.st_mode & S_IFREG) {
+                LogFile* file = new LogFile(std::string(argv[i]), &g_ReadInput);
+                file->Start();
+                log_files.push_back(file);
+            }
+        } else {
+            // TODO print error in some way
+        }
+    }
+}
+
+DWORD WINAPI ThreadedLoadLogs(LPVOID arg)
+{
+    StartupArgs* a = (StartupArgs*)arg;
+    LoadLogs(a->argc, a->argv);
+    return 0;
+}
 
 // Main code
 int main(int argc, char **argv)
@@ -108,35 +149,10 @@ int main(int argc, char **argv)
     //ImFont* font = io.Fonts->AddFontFromFileTTF("c:\\Windows\\Fonts\\ArialUni.ttf", 18.0f, nullptr, io.Fonts->GetGlyphRangesJapanese());
     //IM_ASSERT(font != nullptr);
 
-    // Read all of the log entries
-    std::vector<LogEntry> entries;
-    std::string file;
-
-    for (i32 i = 1; i < argc; i++) {
-        struct stat s;
-        if (stat(argv[i], &s) == 0) {
-            if (s.st_mode & S_IFDIR) {
-                DIR *dir;
-                struct dirent *ent;
-                if ((dir = opendir(argv[i])) != NULL) {
-                    while ((ent = readdir(dir)) != NULL) {
-                        if (ent->d_type != DT_REG)
-                            continue;
-
-                        LogFile *file = new LogFile(std::string(ent->d_name), &g_ReadInput);
-                        file->Start();
-                        log_files.push_back(file);
-                    }
-                }
-            } else if (s.st_mode & S_IFREG) {
-                LogFile *file = new LogFile(std::string(argv[i]), &g_ReadInput);
-                file->Start();
-                log_files.push_back(file);
-            }
-        } else {
-            // TODO print error in some way
-        }
-    }
+    StartupArgs args = { 0 };
+    args.argc = argc - 1;
+    args.argv = argv + 1;
+    ::CreateThread(NULL, 0, ThreadedLoadLogs, (LPVOID)&args, 0, nullptr);
 
     // Our state
     bool show_demo_window = true;
@@ -238,7 +254,7 @@ void RenderApp(std::vector<LogFile *> &files)
     ImGui::SetNextWindowPos(use_work_area ? viewport->WorkPos : viewport->Pos);
     ImGui::SetNextWindowSize(use_work_area ? viewport->WorkSize : viewport->Size);
 
-    ImGuiWindowFlags window_flags = ImGuiWindowFlags_MenuBar;
+    ImGuiWindowFlags window_flags = ImGuiWindowFlags_MenuBar|ImGuiWindowFlags_HorizontalScrollbar;
 
     // TODO Window names should relate to what subsection of the logs you're looking at.
     if (ImGui::Begin("APLogViewer", nullptr, window_flags)) {
@@ -249,16 +265,24 @@ void RenderApp(std::vector<LogFile *> &files)
             ImGui::EndMenuBar();
         }
 
+        static int prev_selected = -1;
         static int selected = -1;
+
         {
             // Log File Source(s)
-            ImGui::BeginChild("Log Sources", ImVec2(150, 0), ImGuiChildFlags_Border | ImGuiChildFlags_ResizeX);
+            ImGui::BeginChild("Log Sources", ImVec2(150, 0), ImGuiChildFlags_Border|ImGuiChildFlags_ResizeX);
             
             for (i32 i = 0; i < files.size(); i++) {
                 char label[128];
                 snprintf(label, sizeof label, "%s", files[i]->filename.c_str());
-                if (ImGui::Selectable(label, selected == i))
+                if (ImGui::Selectable(label, selected == i)) {
+                    prev_selected = selected;
                     selected = i;
+                    files[selected]->active = true;
+                    if (prev_selected >= 0) {
+                        files[prev_selected]->active = false;
+                    }
+                }
             }
             
             ImGui::EndChild();
@@ -343,72 +367,77 @@ void RenderTable(LogFile *file, ImVec2 size)
 		ImGui::TableHeadersRow();
 	}
 
-    ImGuiListClipper clipper;
+    if (file->GetEntriesCount() > 0) {
 
-    clipper.Begin((int)GetTotalLogCount());
+        ImGuiListClipper clipper;
 
-    file->Lock();
+        clipper.Begin((int)GetTotalLogCount());
 
-    while (clipper.Step()) {
-		for (i64 row = clipper.DisplayStart; row < clipper.DisplayEnd; row++) {
-            // TODO we need some new UI for an entry
-			LogEntry *entry = &file->entries[row];
+        file->Lock();
 
-			ImGui::TableNextColumn();
-			ImGui::Text("%c", entry->level);
+        while (clipper.Step()) {
+            for (i64 row = clipper.DisplayStart; row < clipper.DisplayEnd; row++) {
+                // TODO we need some new UI for an entry
+                LogEntry* entry = &file->entries[row];
 
-			ImGui::TableNextColumn();
-            char timebuf[32] = { 0 };
-            struct tm *tmlocal = gmtime((time_t *)&entry->date_timestamp);
-            if (tmlocal) {
-                strftime(timebuf, sizeof timebuf, "%Y-%m-%d %H:%M:%S", tmlocal);
-                ImGui::Text(timebuf);
-            } else {
-                ImGui::Text("N/A");
+                ImGui::TableNextColumn();
+                ImGui::Text("%c", entry->level);
+
+                ImGui::TableNextColumn();
+                char timebuf[32] = { 0 };
+                struct tm* tmlocal = gmtime((time_t*)&entry->date_timestamp);
+                if (tmlocal) {
+                    strftime(timebuf, sizeof timebuf, "%Y-%m-%d %H:%M:%S", tmlocal);
+                    ImGui::Text(timebuf);
+                }
+                else {
+                    ImGui::Text("N/A");
+                }
+
+                ImGui::TableNextColumn();
+                StringMap m0 = file->GetStringMap(entry->service);
+                ImGui::Text("%.*s", m0.len, m0.str);
+
+                ImGui::TableNextColumn();
+                StringMap m1 = file->GetStringMap(entry->service);
+                ImGui::Text("%.*s", m1.len, m1.str);
+
+                ImGui::TableNextColumn();
+                StringMap m2 = file->GetStringMap(entry->service);
+                ImGui::Text("%.*s", m2.len, m2.str);
+
+                ImGui::TableNextColumn();
+                StringMap m3 = file->GetStringMap(entry->service);
+                ImGui::Text("%.*s", m3.len, m3.str);
+
+                ImGui::TableNextColumn();
+                ImGui::Text("%ld", entry->source_line);
+
+                ImGui::TableNextColumn();
+                ImGui::Text("%ld", entry->process_id);
+
+                ImGui::TableNextColumn();
+                ImGui::Text("%ld", entry->thread_id);
+
+                ImGui::TableNextColumn();
+                char tsbuf[32] = { 0 };
+                struct tm* tmts = gmtime((time_t*)&entry->timestamp);
+                if (tmts) {
+                    strftime(tsbuf, sizeof tsbuf, "%Y-%m-%d %H:%M:%S", tmts);
+                    ImGui::Text(timebuf);
+                }
+                else {
+                    ImGui::Text("N/A");
+                }
+
+                ImGui::TableNextColumn();
+                StringMap m4 = file->GetStringMap(entry->message);
+                ImGui::Text("%.*s", m4.len, m4.str);
             }
+        }
 
-			ImGui::TableNextColumn();
-            StringMap m0 = file->GetStringMap(entry->service);
-            ImGui::Text("%.*s", m0.len, m0.str);
-
-			ImGui::TableNextColumn();
-            StringMap m1 = file->GetStringMap(entry->service);
-            ImGui::Text("%.*s", m1.len, m1.str);
-
-			ImGui::TableNextColumn();
-            StringMap m2 = file->GetStringMap(entry->service);
-            ImGui::Text("%.*s", m2.len, m2.str);
-
-			ImGui::TableNextColumn();
-            StringMap m3 = file->GetStringMap(entry->service);
-            ImGui::Text("%.*s", m3.len, m3.str);
-
-			ImGui::TableNextColumn();
-            ImGui::Text("%ld", entry->source_line);
-
-			ImGui::TableNextColumn();
-            ImGui::Text("%ld", entry->process_id);
-
-			ImGui::TableNextColumn();
-            ImGui::Text("%ld", entry->thread_id);
-
-			ImGui::TableNextColumn();
-            char tsbuf[32] = { 0 };
-            struct tm *tmts = gmtime((time_t *)&entry->timestamp);
-            if (tmts) {
-                strftime(tsbuf, sizeof tsbuf, "%Y-%m-%d %H:%M:%S", tmts);
-                ImGui::Text(timebuf);
-            } else {
-                ImGui::Text("N/A");
-            }
-
-            ImGui::TableNextColumn();
-            StringMap m4 = file->GetStringMap(entry->message);
-            ImGui::Text("%.*s", m4.len, m4.str);
-		}
-	}
-
-    file->Unlock();
+        file->Unlock();
+    }
 
     ImGui::EndTable();
 

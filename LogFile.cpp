@@ -40,6 +40,12 @@ namespace APLogViewer
 		// logging system will write a _new_ file, with more digits appended at the end.
 
 		LogFile *log_file = reinterpret_cast<LogFile *>(arg);
+		while (!log_file->active) {
+			::Sleep(50);
+		}
+
+		std::cout << "ReadAPLog for " << log_file->path << std::endl;
+
 		log_file->ReadAPLog();
 		log_file->WaitForChangesUntilFinished();
 
@@ -85,7 +91,7 @@ namespace APLogViewer
 				nullptr
 			);
 			if (this->file_handle == INVALID_HANDLE_VALUE) {
-				// best way to handle this error?
+				ERR("%s - INVALID_HANDLE_VALUE, GetLastError: %u", this->path.c_str(), ::GetLastError());
 				return;
 			}
 		}
@@ -100,12 +106,12 @@ namespace APLogViewer
 
 			DWORD rc = ::GetLastError();
 			if (rc != NO_ERROR && rc == ERROR_ALREADY_EXISTS) {
-				// best way to handle this error?
+				ERR("%s - ERROR_ALREADY_EXISTS %u", this->path.c_str(), rc);
 				return;
 			}
 
 			if (this->file_mapping == nullptr) {
-				// MSDN docs from the previous if block were wrong... How silly.
+				ERR("%s - file mapping was NULL", this->path.c_str());
 				return;
 			}
 		}
@@ -116,7 +122,7 @@ namespace APLogViewer
 			);
 
 			if (this->mapping_base == nullptr) {
-				// Couldn't map the file into memory.
+				ERR("%s - MapViewOfFile returned NULL", this->path.c_str());
 				return;
 			}
 		}
@@ -125,7 +131,7 @@ namespace APLogViewer
 			LARGE_INTEGER size = { 0 };
 			bool rc = GetFileSizeEx(this->file_handle, &size);
 			if (!rc) {
-				// Couldn't get the size of the file :(
+				ERR("%s - GetFileSizeEx returned FALSE", this->path.c_str());
 				return;
 			}
 
@@ -145,9 +151,8 @@ namespace APLogViewer
 			// TESTING We pass the current directory
 
 			this->change_notifier = FindFirstChangeNotification(L".\\", false, filter);
-
 			if (this->change_notifier == INVALID_HANDLE_VALUE) {
-				ERR("We got some error! %u", GetLastError());
+				ERR("%s - FindFirstChangeNotification returned INVALID_HANDLE_VALUE (FAIL)", this->path.c_str());
 			}
 		}
 
