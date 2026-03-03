@@ -147,6 +147,8 @@
   <ItemGroup>
     <ClCompile Include="ConfigEditor.cpp" />
     <ClCompile Include="ImGuiFileDialog.cpp" />
+    <ClCompile Include="IniParser.cpp" />
+    <ClCompile Include="IniWriter.cpp" />
     <ClCompile Include="imgui\backends\imgui_impl_dx10.cpp" />
     <ClCompile Include="imgui\backends\imgui_impl_win32.cpp" />
     <ClCompile Include="imgui\imgui.cpp" />
@@ -162,6 +164,9 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ConfigEditor.h" />
+    <ClInclude Include="IniModel.h" />
+    <ClInclude Include="IniParser.h" />
+    <ClInclude Include="IniWriter.h" />
     <ClInclude Include="common.h" />
     <ClInclude Include="dirent.h" />
     <ClInclude Include="ImGuiFileDialog.h" />

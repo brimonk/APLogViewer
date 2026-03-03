@@ -3,9 +3,9 @@
 
 #include "common.h"
 #include "imgui.h"
-
-// Forward declaration of data model types (to be implemented in Phase 2)
-// For now the Config Editor is a stub UI.
+#include "IniModel.h"
+#include "IniParser.h"
+#include "IniWriter.h"
 
 class ConfigEditor
 {
@@ -14,13 +14,30 @@ public:
     ~ConfigEditor();
 
     // Main render function — call each frame when Config Editor view is active.
-    // Renders the menu bar items, section tree, key table, and status bar.
     void Render();
 
 private:
-    // Placeholder state — will be expanded in later phases
+    void RenderSectionTree();
+    void RenderKeyTable();
+
+    // Load/unload
+    bool LoadFile(const std::string& path);
+    void CloseFile();
+
+    // State
     bool m_HasFile;
+    bool m_Dirty;
     char m_FilePath[512];
+    std::string m_ErrorMsg;
+
+    // Parsed INI data
+    IniFile m_Ini;
+
+    // Selection
+    int m_SelectedSection;   // Index into m_Ini.sections, -1 = none
+
+    // Filter
+    char m_FilterBuf[128];
 };
 
 #endif // CONFIG_EDITOR_H
