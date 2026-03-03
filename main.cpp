@@ -27,6 +27,7 @@
 
 #include "ImGuiFileDialog.h"
 #include "ImGuiFileDialogConfig.h"
+#include "ConfigEditor.h"
 
 const char kPathSeparator =
 #ifdef _WIN32
@@ -36,6 +37,14 @@ const char kPathSeparator =
 #endif
 
 using namespace APLogViewer;
+
+enum ActiveView {
+    View_LogViewer,
+    View_ConfigEditor,
+};
+
+static ActiveView g_ActiveView = View_LogViewer;
+static ConfigEditor g_ConfigEditor;
 
 typedef struct StartupArgs {
     int argc;
@@ -69,6 +78,7 @@ u64 GetTotalLogCount()
 }
 
 void RenderApp(std::vector<LogFile *> &files);
+void RenderLogViewer(std::vector<LogFile *> &files);
 void RenderTable(LogFile *file, ImVec2 size);
 
 void AddFile(std::string path)
@@ -176,7 +186,6 @@ int main(int argc, char **argv)
     ::CreateThread(NULL, 0, ThreadedLoadLogs, (LPVOID)&args, 0, nullptr);
 
     // Our state
-    bool show_demo_window = true;
     ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
 
     // Main loop
@@ -210,33 +219,8 @@ int main(int argc, char **argv)
         ImGui_ImplWin32_NewFrame();
         ImGui::NewFrame();
 
-        // 1. Show the big demo window (Most of the sample code is in ImGui::ShowDemoWindow()! You can browse its code to learn more about Dear ImGui!).
-        if (show_demo_window)
-            ImGui::ShowDemoWindow(&show_demo_window);
-
-        // 2. Show a simple window that we create ourselves. We use a Begin/End pair to create a named window.
-        {
-            static float f = 0.0f;
-            static int counter = 0;
-
-            RenderApp(log_files);
-
-#if 0
-            ImGui::Begin("Hello, world!");                          // Create a window called "Hello, world!" and append into it.
-
-            ImGui::Text("This is some useful text.");               // Display some text (you can use a format strings too)
-            ImGui::Checkbox("Demo Window", &show_demo_window);      // Edit bools storing our window open/close state
-            ImGui::Checkbox("Another Window", &show_another_window);
-
-            ImGui::SliderFloat("float", &f, 0.0f, 1.0f);            // Edit 1 float using a slider from 0.0f to 1.0f
-            ImGui::ColorEdit3("clear color", (float *)&clear_color); // Edit 3 floats representing a color
-
-            if (ImGui::Button("Button"))                            // Buttons return true when clicked (most widgets return true when edited/activated)
-                counter++;
-            ImGui::SameLine();
-            ImGui::Text("counter = %d", counter);
-#endif
-        }
+        // Render the main application
+        RenderApp(log_files);
 
         // Rendering
         ImGui::Render();
@@ -264,11 +248,6 @@ int main(int argc, char **argv)
 
 void RenderApp(std::vector<LogFile *> &files)
 {
-    const float TEXT_BASE_WIDTH = ImGui::CalcTextSize("A").x;
-    const float TEXT_BASE_HEIGHT = ImGui::GetTextLineHeightWithSpacing();
-
-    ImGuiIO &io = ImGui::GetIO();
-
     static bool use_work_area = true;
 
     const ImGuiViewport *viewport = ImGui::GetMainViewport();
@@ -277,106 +256,159 @@ void RenderApp(std::vector<LogFile *> &files)
 
     ImGuiWindowFlags window_flags = ImGuiWindowFlags_MenuBar|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_HorizontalScrollbar;
 
-    // TODO Window names should relate to what subsection of the logs you're looking at.
     if (ImGui::Begin("APLogViewer", nullptr, window_flags)) {
-        if (ImGui::BeginMenuBar()) {
-            if (ImGui::BeginMenu("File")) {
 
-                // Open a file dialog to add files not added from the command line
-                if (ImGui::MenuItem("Add File...")) {
-                    IGFD::FileDialogConfig config;
-                    config.path = ".";
-                    ImGuiFileDialog::Instance()->OpenDialog("ChooseFileDlgKey", "Choose File", ".log,*", config);
-                }
+        // --- Top-level navigation button bar ---
+        {
+            ImGui::PushStyleVar(ImGuiStyleVar_FrameRounding, 4.0f);
 
-                if (ImGui::MenuItem("Add Directory...")) {
-                    IGFD::FileDialogConfig config;
-                    config.path = ".";
-                    ImGuiFileDialog::Instance()->OpenDialog("ChooseDirectoryDlgKey", "Choose Directory", nullptr, config);
-                }
+            bool is_log = (g_ActiveView == View_LogViewer);
+            bool is_cfg = (g_ActiveView == View_ConfigEditor);
 
-                ImGui::EndMenu();
+            // Highlight the active button
+            if (is_log) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
             }
-            ImGui::EndMenuBar();
+            if (ImGui::Button("Log Viewer")) {
+                g_ActiveView = View_LogViewer;
+            }
+            if (is_log) {
+                ImGui::PopStyleColor();
+            }
+
+            ImGui::SameLine();
+
+            if (is_cfg) {
+                ImGui::PushStyleColor(ImGuiCol_Button, ImGui::GetStyleColorVec4(ImGuiCol_ButtonActive));
+            }
+            if (ImGui::Button("Config Editor")) {
+                g_ActiveView = View_ConfigEditor;
+            }
+            if (is_cfg) {
+                ImGui::PopStyleColor();
+            }
+
+            ImGui::PopStyleVar();
+
+            ImGui::Separator();
         }
 
-        static int prev_selected = -1;
-        static int selected = -1;
-
-        {
-            // Log File Source(s)
-            ImGui::BeginChild("Log Sources", ImVec2(150, 0), ImGuiChildFlags_Border|ImGuiChildFlags_ResizeX);
-            
-            for (i32 i = 0; i < files.size(); i++) {
-                char label[128];
-                snprintf(label, sizeof label, "%s", files[i]->filename.c_str());
-                if (ImGui::Selectable(label, selected == i)) {
-                    prev_selected = selected;
-                    selected = i;
-                    files[selected]->active = true;
-                    if (prev_selected >= 0) {
-                        files[prev_selected]->active = false;
-                    }
-                }
-            }
-            
-            ImGui::EndChild();
-        }
-
-        ImGui::SameLine();
-
-        {
-            ImVec2 logsize = use_work_area ? viewport->WorkPos : viewport->Pos;
-            logsize.x -= 150;
-
-            ImGui::BeginGroup();
-            ImGui::BeginChild("Table Stats / Filtering", ImVec2(0, TEXT_BASE_HEIGHT * 4), ImGuiChildFlags_Border);
-
-            if (selected >= 0) {
-                static i64 records_last_frame = 0;
-                i64 records_this_frame = (i64)files[selected]->GetEntriesCount();
-
-                ImGui::Text("Records: %ld (%ld recs/frame)", records_this_frame, records_this_frame - records_last_frame);
-
-                records_last_frame = records_this_frame;
-            }
-            ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
-
-            ImGui::EndChild();
-
-            ImGui::BeginChild("Log Contents", ImVec2(0, logsize.y), ImGuiChildFlags_Border);
-
-            if (selected >= 0) {
-                RenderTable(files[selected], ImVec2(0, logsize.y));
-            }
-
-            ImGui::EndChild();
-
-            ImGui::EndGroup();
+        // --- Dispatch to active view ---
+        switch (g_ActiveView) {
+        case View_LogViewer:
+            RenderLogViewer(files);
+            break;
+        case View_ConfigEditor:
+            g_ConfigEditor.Render();
+            break;
         }
     }
 
+    ImGui::End();
+}
+
+void RenderLogViewer(std::vector<LogFile *> &files)
+{
+    const float TEXT_BASE_HEIGHT = ImGui::GetTextLineHeightWithSpacing();
+
+    ImGuiIO &io = ImGui::GetIO();
+
+    static bool use_work_area = true;
+    const ImGuiViewport *viewport = ImGui::GetMainViewport();
+
+    // --- Menu bar for Log Viewer ---
+    if (ImGui::BeginMenuBar()) {
+        if (ImGui::BeginMenu("File")) {
+
+            // Open a file dialog to add files not added from the command line
+            if (ImGui::MenuItem("Add File...")) {
+                IGFD::FileDialogConfig config;
+                config.path = ".";
+                ImGuiFileDialog::Instance()->OpenDialog("ChooseFileDlgKey", "Choose File", ".log,*", config);
+            }
+
+            if (ImGui::MenuItem("Add Directory...")) {
+                IGFD::FileDialogConfig config;
+                config.path = ".";
+                ImGuiFileDialog::Instance()->OpenDialog("ChooseDirectoryDlgKey", "Choose Directory", nullptr, config);
+            }
+
+            ImGui::EndMenu();
+        }
+        ImGui::EndMenuBar();
+    }
+
+    static int prev_selected = -1;
+    static int selected = -1;
+
+    {
+        // Log File Source(s)
+        ImGui::BeginChild("Log Sources", ImVec2(150, 0), ImGuiChildFlags_Border|ImGuiChildFlags_ResizeX);
+        
+        for (i32 i = 0; i < files.size(); i++) {
+            char label[128];
+            snprintf(label, sizeof label, "%s", files[i]->filename.c_str());
+            if (ImGui::Selectable(label, selected == i)) {
+                prev_selected = selected;
+                selected = i;
+                files[selected]->active = true;
+                if (prev_selected >= 0) {
+                    files[prev_selected]->active = false;
+                }
+            }
+        }
+        
+        ImGui::EndChild();
+    }
+
+    ImGui::SameLine();
+
+    {
+        ImVec2 logsize = use_work_area ? viewport->WorkPos : viewport->Pos;
+        logsize.x -= 150;
+
+        ImGui::BeginGroup();
+        ImGui::BeginChild("Table Stats / Filtering", ImVec2(0, TEXT_BASE_HEIGHT * 4), ImGuiChildFlags_Border);
+
+        if (selected >= 0) {
+            static i64 records_last_frame = 0;
+            i64 records_this_frame = (i64)files[selected]->GetEntriesCount();
+
+            ImGui::Text("Records: %ld (%ld recs/frame)", records_this_frame, records_this_frame - records_last_frame);
+
+            records_last_frame = records_this_frame;
+        }
+        ImGui::Text("Application average %.3f ms/frame (%.1f FPS)", 1000.0f / io.Framerate, io.Framerate);
+
+        ImGui::EndChild();
+
+        ImGui::BeginChild("Log Contents", ImVec2(0, logsize.y), ImGuiChildFlags_Border);
+
+        if (selected >= 0) {
+            RenderTable(files[selected], ImVec2(0, logsize.y));
+        }
+
+        ImGui::EndChild();
+
+        ImGui::EndGroup();
+    }
+
+    // --- File dialog results ---
     if (ImGuiFileDialog::Instance()->Display("ChooseFileDlgKey")) {
-        if (ImGuiFileDialog::Instance()->IsOk()) { // action if OK
+        if (ImGuiFileDialog::Instance()->IsOk()) {
             std::string filePathName = ImGuiFileDialog::Instance()->GetFilePathName();
             AddFile(filePathName);
         }
-
-        // close
         ImGuiFileDialog::Instance()->Close();
     }
 
     if (ImGuiFileDialog::Instance()->Display("ChooseDirectoryDlgKey")) {
-        if (ImGuiFileDialog::Instance()->IsOk()) { // action if OK
+        if (ImGuiFileDialog::Instance()->IsOk()) {
             std::string filePathName = ImGuiFileDialog::Instance()->GetCurrentPath();
             LoadLogs(std::vector<std::string> { filePathName });
         }
-
-        // close
         ImGuiFileDialog::Instance()->Close();
     }
-
-    ImGui::End();
 }
 
 void RenderTable(LogFile *file, ImVec2 size)
@@ -422,13 +454,13 @@ void RenderTable(LogFile *file, ImVec2 size)
 		ImGui::TableHeadersRow();
 	}
 
-    int records = file->GetEntriesCount();
+    u64 records = file->GetEntriesCount();
 
     if (records > 0) {
 
         ImGuiListClipper clipper;
 
-        clipper.Begin(records);
+        clipper.Begin((int)records);
 
         file->Lock();
 

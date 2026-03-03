@@ -52,6 +52,9 @@
     <ClCompile Include="ImGuiFileDialog.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="ConfigEditor.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="imgui\imgui.h">
@@ -90,5 +93,6 @@
     <ClInclude Include="ImGuiFileDialogConfig.h">
       <Filter>Source Files</Filter>
     </ClInclude>
+    <ClInclude Include="ConfigEditor.h" />
   </ItemGroup>
 </Project>
