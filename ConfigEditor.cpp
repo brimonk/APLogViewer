@@ -6,9 +6,15 @@ ConfigEditor::ConfigEditor()
     : m_HasFile(false)
     , m_Dirty(false)
     , m_SelectedSection(-1)
+    , m_EditSection(-1)
+    , m_EditLine(-1)
+    , m_EditColumn(-1)
+    , m_EditActive(false)
+    , m_EditFocusNeeded(false)
 {
     memset(m_FilePath, 0, sizeof(m_FilePath));
     memset(m_FilterBuf, 0, sizeof(m_FilterBuf));
+    memset(m_EditBuf, 0, sizeof(m_EditBuf));
 }
 
 ConfigEditor::~ConfigEditor()
@@ -36,13 +42,37 @@ void ConfigEditor::CloseFile()
     m_HasFile = false;
     m_Dirty = false;
     m_SelectedSection = -1;
+    m_EditSection = -1;
+    m_EditLine = -1;
+    m_EditColumn = -1;
+    m_EditActive = false;
+    m_EditFocusNeeded = false;
     memset(m_FilePath, 0, sizeof(m_FilePath));
     m_Ini = IniFile();
     m_ErrorMsg.clear();
 }
 
+void ConfigEditor::MarkDirty()
+{
+    m_Dirty = true;
+}
+
+void ConfigEditor::HandleKeyboardShortcuts()
+{
+    ImGuiIO& io = ImGui::GetIO();
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S) && m_HasFile) {
+        std::string err;
+        if (IniWriter::Save(m_Ini, err)) {
+            m_Dirty = false;
+        } else {
+            m_ErrorMsg = err;
+        }
+    }
+}
+
 void ConfigEditor::Render()
 {
+    HandleKeyboardShortcuts();
     // --- Menu bar ---
     if (ImGui::BeginMenuBar()) {
         if (ImGui::BeginMenu("File")) {
@@ -256,7 +286,7 @@ void ConfigEditor::RenderSectionTree()
 static std::string FormatConditions(const std::vector<Condition>& conds)
 {
     if (conds.empty())
-        return "(none)";
+        return "";
 
     std::string result;
     for (size_t i = 0; i < conds.size(); i++) {
@@ -266,6 +296,51 @@ static std::string FormatConditions(const std::vector<Condition>& conds)
         result += conds[i].scope_value;
     }
     return result;
+}
+
+// Helper: parse a conditions string back into a vector of Condition structs.
+// Format: "Scope:Value, Scope:Value, ..."
+static bool ParseConditionsFromString(const std::string& text, std::vector<Condition>& out)
+{
+    out.clear();
+    if (text.empty())
+        return true;
+
+    // Split on ','
+    std::string remaining = text;
+    while (!remaining.empty()) {
+        // Trim leading whitespace
+        size_t start = remaining.find_first_not_of(" \t");
+        if (start == std::string::npos) break;
+        remaining = remaining.substr(start);
+
+        // Find next comma
+        size_t comma = remaining.find(',');
+        std::string token = (comma != std::string::npos) ? remaining.substr(0, comma) : remaining;
+
+        // Trim trailing whitespace from token
+        size_t end = token.find_last_not_of(" \t");
+        if (end != std::string::npos) token = token.substr(0, end + 1);
+
+        // Parse "Scope:Value"
+        size_t colon = token.find(':');
+        if (colon == std::string::npos || colon == 0 || colon + 1 >= token.size())
+            return false;
+
+        std::string scope_str = token.substr(0, colon);
+        std::string value_str = token.substr(colon + 1);
+
+        Condition cond;
+        ParseScopeType(scope_str, cond.scope_type);
+        cond.scope_value = value_str;
+        out.push_back(cond);
+
+        if (comma != std::string::npos)
+            remaining = remaining.substr(comma + 1);
+        else
+            break;
+    }
+    return true;
 }
 
 void ConfigEditor::RenderKeyTable()
@@ -313,9 +388,8 @@ void ConfigEditor::RenderKeyTable()
         ImGui::TableSetupScrollFreeze(0, 1);
         ImGui::TableHeadersRow();
 
-        int row_idx = 0;
         for (size_t i = 0; i < section.lines.size(); i++) {
-            const Line& line = section.lines[i];
+            Line& line = section.lines[i];
 
             if (line.type == Line_Comment) {
                 // Show comments as a spanning row with muted color
@@ -324,7 +398,6 @@ void ConfigEditor::RenderKeyTable()
                 ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.5f, 0.5f, 0.5f, 1.0f));
                 ImGui::TextWrapped("%s", line.comment.c_str());
                 ImGui::PopStyleColor();
-                // Skip the other columns (they'll be empty)
                 ImGui::TableNextColumn();
                 ImGui::TableNextColumn();
                 continue;
@@ -333,33 +406,160 @@ void ConfigEditor::RenderKeyTable()
             if (line.type == Line_Blank)
                 continue;
 
-            // Line_KeyValue
-            const KeyEntry& entry = line.key_entry;
+            // Line_KeyValue — editable row
+            KeyEntry& entry = line.key_entry;
 
             ImGui::PushID((int)i);
             ImGui::TableNextRow();
 
-            // Conditions column
+            // --- Conditions column (editable) ---
             ImGui::TableNextColumn();
             {
-                std::string cond_str = FormatConditions(entry.conditions);
-                if (entry.conditions.empty()) {
-                    ImGui::TextDisabled("%s", cond_str.c_str());
+                bool is_editing = (m_EditActive &&
+                    m_EditSection == m_SelectedSection &&
+                    m_EditLine == (int)i &&
+                    m_EditColumn == 0);
+
+                if (is_editing) {
+                    if (m_EditFocusNeeded) {
+                        ImGui::SetKeyboardFocusHere();
+                        m_EditFocusNeeded = false;
+                    }
+                    ImGui::SetNextItemWidth(-1);
+                    if (ImGui::InputText("##cond", m_EditBuf, sizeof(m_EditBuf),
+                                        ImGuiInputTextFlags_EnterReturnsTrue |
+                                        ImGuiInputTextFlags_AutoSelectAll)) {
+                        // Enter pressed — commit
+                        std::vector<Condition> new_conds;
+                        if (ParseConditionsFromString(m_EditBuf, new_conds)) {
+                            entry.conditions = new_conds;
+                            MarkDirty();
+                        }
+                        m_EditActive = false;
+                    }
+                    // Also commit on deactivation (clicking away)
+                    if (ImGui::IsItemDeactivated()) {
+                        std::vector<Condition> new_conds;
+                        if (ParseConditionsFromString(m_EditBuf, new_conds)) {
+                            entry.conditions = new_conds;
+                            MarkDirty();
+                        }
+                        m_EditActive = false;
+                    }
                 } else {
-                    ImGui::TextWrapped("%s", cond_str.c_str());
+                    std::string cond_str = FormatConditions(entry.conditions);
+                    const char* display = entry.conditions.empty() ? "(none)" : cond_str.c_str();
+                    if (entry.conditions.empty())
+                        ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
+                    if (ImGui::Selectable(display, false, ImGuiSelectableFlags_AllowDoubleClick)) {
+                        if (ImGui::IsMouseDoubleClicked(0)) {
+                            m_EditSection = m_SelectedSection;
+                            m_EditLine = (int)i;
+                            m_EditColumn = 0;
+                            m_EditActive = true;
+                            m_EditFocusNeeded = true;
+                            std::string cond_str2 = FormatConditions(entry.conditions);
+                            snprintf(m_EditBuf, sizeof(m_EditBuf), "%s", cond_str2.c_str());
+                        }
+                    }
+                    if (entry.conditions.empty())
+                        ImGui::PopStyleColor();
                 }
             }
 
-            // Key column
+            // --- Key column (editable) ---
             ImGui::TableNextColumn();
-            ImGui::Text("%s", entry.key.c_str());
+            {
+                bool is_editing = (m_EditActive &&
+                    m_EditSection == m_SelectedSection &&
+                    m_EditLine == (int)i &&
+                    m_EditColumn == 1);
 
-            // Value column
+                if (is_editing) {
+                    if (m_EditFocusNeeded) {
+                        ImGui::SetKeyboardFocusHere();
+                        m_EditFocusNeeded = false;
+                    }
+                    ImGui::SetNextItemWidth(-1);
+                    if (ImGui::InputText("##key", m_EditBuf, sizeof(m_EditBuf),
+                                        ImGuiInputTextFlags_EnterReturnsTrue |
+                                        ImGuiInputTextFlags_AutoSelectAll)) {
+                        std::string new_key(m_EditBuf);
+                        if (!new_key.empty() && new_key != entry.key) {
+                            entry.key = new_key;
+                            MarkDirty();
+                        }
+                        m_EditActive = false;
+                    }
+                    if (ImGui::IsItemDeactivated()) {
+                        std::string new_key(m_EditBuf);
+                        if (!new_key.empty() && new_key != entry.key) {
+                            entry.key = new_key;
+                            MarkDirty();
+                        }
+                        m_EditActive = false;
+                    }
+                } else {
+                    if (ImGui::Selectable(entry.key.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
+                        if (ImGui::IsMouseDoubleClicked(0)) {
+                            m_EditSection = m_SelectedSection;
+                            m_EditLine = (int)i;
+                            m_EditColumn = 1;
+                            m_EditActive = true;
+                            m_EditFocusNeeded = true;
+                            snprintf(m_EditBuf, sizeof(m_EditBuf), "%s", entry.key.c_str());
+                        }
+                    }
+                }
+            }
+
+            // --- Value column (editable) ---
             ImGui::TableNextColumn();
-            ImGui::Text("%s", entry.value.c_str());
+            {
+                bool is_editing = (m_EditActive &&
+                    m_EditSection == m_SelectedSection &&
+                    m_EditLine == (int)i &&
+                    m_EditColumn == 2);
+
+                if (is_editing) {
+                    if (m_EditFocusNeeded) {
+                        ImGui::SetKeyboardFocusHere();
+                        m_EditFocusNeeded = false;
+                    }
+                    ImGui::SetNextItemWidth(-1);
+                    if (ImGui::InputText("##val", m_EditBuf, sizeof(m_EditBuf),
+                                        ImGuiInputTextFlags_EnterReturnsTrue |
+                                        ImGuiInputTextFlags_AutoSelectAll)) {
+                        std::string new_val(m_EditBuf);
+                        if (new_val != entry.value) {
+                            entry.value = new_val;
+                            MarkDirty();
+                        }
+                        m_EditActive = false;
+                    }
+                    if (ImGui::IsItemDeactivated()) {
+                        std::string new_val(m_EditBuf);
+                        if (new_val != entry.value) {
+                            entry.value = new_val;
+                            MarkDirty();
+                        }
+                        m_EditActive = false;
+                    }
+                } else {
+                    if (ImGui::Selectable(entry.value.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
+                        if (ImGui::IsMouseDoubleClicked(0)) {
+                            m_EditSection = m_SelectedSection;
+                            m_EditLine = (int)i;
+                            m_EditColumn = 2;
+                            m_EditActive = true;
+                            m_EditFocusNeeded = true;
+                            snprintf(m_EditBuf, sizeof(m_EditBuf), "%s", entry.value.c_str());
+                        }
+                    }
+                }
+            }
 
             ImGui::PopID();
-            row_idx++;
         }
 
         ImGui::EndTable();

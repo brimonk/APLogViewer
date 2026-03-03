@@ -19,10 +19,14 @@ public:
 private:
     void RenderSectionTree();
     void RenderKeyTable();
+    void HandleKeyboardShortcuts();
 
     // Load/unload
     bool LoadFile(const std::string& path);
     void CloseFile();
+
+    // Editing helpers
+    void MarkDirty();
 
     // State
     bool m_HasFile;
@@ -38,6 +42,15 @@ private:
 
     // Filter
     char m_FilterBuf[128];
+
+    // Editing state — temporary buffers for the currently-edited cell
+    // We use a (section_idx, line_idx, column) triple to identify what's being edited
+    int m_EditSection;       // Which section is being edited (-1 = none)
+    int m_EditLine;          // Which line within the section
+    int m_EditColumn;        // 0=conditions, 1=key, 2=value
+    char m_EditBuf[2048];    // Edit buffer
+    bool m_EditActive;       // Whether an edit is in progress
+    bool m_EditFocusNeeded;  // Set keyboard focus on next frame
 };
 
 #endif // CONFIG_EDITOR_H
