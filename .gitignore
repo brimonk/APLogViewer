@@ -401,3 +401,6 @@ FodyWeavers.xsd
 imgui.ini
 
 *.exe
+
+examples\*.ini
+PLAN.md
