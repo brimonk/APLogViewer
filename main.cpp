@@ -254,7 +254,7 @@ void RenderApp(std::vector<LogFile *> &files)
     ImGui::SetNextWindowPos(use_work_area ? viewport->WorkPos : viewport->Pos);
     ImGui::SetNextWindowSize(use_work_area ? viewport->WorkSize : viewport->Size);
 
-    ImGuiWindowFlags window_flags = ImGuiWindowFlags_MenuBar|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_HorizontalScrollbar;
+    ImGuiWindowFlags window_flags = ImGuiWindowFlags_MenuBar|ImGuiWindowFlags_NoResize|ImGuiWindowFlags_NoCollapse|ImGuiWindowFlags_NoTitleBar|ImGuiWindowFlags_HorizontalScrollbar;
 
     if (ImGui::Begin("APLogViewer", nullptr, window_flags)) {
 

@@ -172,22 +172,15 @@ static bool ParseLines(const std::vector<std::string>& raw_lines, IniFile& out, 
         // Determine the target list for this line (preamble or current section)
         auto& target = current_section ? current_section->lines : out.preamble;
 
-        // Blank line
+        // Blank line — skip
         if (line.empty() || Trim(line).empty()) {
-            Line l;
-            l.type = Line_Blank;
-            target.push_back(l);
             continue;
         }
 
         std::string trimmed = Trim(line);
 
-        // Comment line (starts with ';')
+        // Comment line (starts with ';') — skip
         if (trimmed[0] == ';') {
-            Line l;
-            l.type = Line_Comment;
-            l.comment = line; // Preserve original whitespace
-            target.push_back(l);
             continue;
         }
 
