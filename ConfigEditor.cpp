@@ -1006,8 +1006,7 @@ void ConfigEditor::RenderKeyTable()
                     if (entry.conditions.empty())
                         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
 
-                    ImGuiSelectableFlags sel_flags = ImGuiSelectableFlags_AllowDoubleClick |
-                                                     ImGuiSelectableFlags_SpanAllColumns;
+                    ImGuiSelectableFlags sel_flags = ImGuiSelectableFlags_AllowDoubleClick;
                     if (ImGui::Selectable(display, is_selected_line, sel_flags)) {
                         m_SelectedLine = (int)i;
                         if (ImGui::IsMouseDoubleClicked(0)) {
