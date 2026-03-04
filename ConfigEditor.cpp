@@ -6,15 +6,27 @@ ConfigEditor::ConfigEditor()
     : m_HasFile(false)
     , m_Dirty(false)
     , m_SelectedSection(-1)
+    , m_SelectedLine(-1)
     , m_EditSection(-1)
     , m_EditLine(-1)
     , m_EditColumn(-1)
     , m_EditActive(false)
     , m_EditFocusNeeded(false)
+    , m_ShowNewScenarioDlg(false)
+    , m_NewScenarioType(0)
+    , m_ShowCloneScenarioDlg(false)
+    , m_CloneSourceIdx(-1)
+    , m_ShowRenameScenarioDlg(false)
+    , m_RenameTargetIdx(-1)
+    , m_ShowDeleteConfirmDlg(false)
+    , m_DeleteTargetIdx(-1)
 {
     memset(m_FilePath, 0, sizeof(m_FilePath));
     memset(m_FilterBuf, 0, sizeof(m_FilterBuf));
     memset(m_EditBuf, 0, sizeof(m_EditBuf));
+    memset(m_NewScenarioName, 0, sizeof(m_NewScenarioName));
+    memset(m_CloneNewName, 0, sizeof(m_CloneNewName));
+    memset(m_RenameNewName, 0, sizeof(m_RenameNewName));
 }
 
 ConfigEditor::~ConfigEditor()
@@ -42,11 +54,16 @@ void ConfigEditor::CloseFile()
     m_HasFile = false;
     m_Dirty = false;
     m_SelectedSection = -1;
+    m_SelectedLine = -1;
     m_EditSection = -1;
     m_EditLine = -1;
     m_EditColumn = -1;
     m_EditActive = false;
     m_EditFocusNeeded = false;
+    m_ShowNewScenarioDlg = false;
+    m_ShowCloneScenarioDlg = false;
+    m_ShowRenameScenarioDlg = false;
+    m_ShowDeleteConfirmDlg = false;
     memset(m_FilePath, 0, sizeof(m_FilePath));
     m_Ini = IniFile();
     m_ErrorMsg.clear();
@@ -57,9 +74,420 @@ void ConfigEditor::MarkDirty()
     m_Dirty = true;
 }
 
+// --- Scenario Operations ---
+
+// Scenario type info for the "New Scenario" dialog
+struct ScenarioTypeInfo {
+    const char* label;
+    const char* prefix;
+    SectionType type;
+};
+
+static const ScenarioTypeInfo g_ScenarioTypes[] = {
+    { "Producer",   "Producer_",   Section_Producer },
+    { "Consumer",   "Consumer_",   Section_Consumer },
+    { "GWProducer", "GWProducer_", Section_GWProducer },
+    { "Reliable",   "Reliable_",   Section_Reliable },
+    { "Rehydrate",  "Rehydrate_",  Section_Rehydrate },
+};
+static const int g_NumScenarioTypes = (int)(sizeof(g_ScenarioTypes) / sizeof(g_ScenarioTypes[0]));
+
+void ConfigEditor::AddScenario(SectionType type, const std::string& name)
+{
+    // Build the section header name by finding the matching prefix
+    std::string section_name;
+    for (int i = 0; i < g_NumScenarioTypes; i++) {
+        if (g_ScenarioTypes[i].type == type) {
+            section_name = std::string(g_ScenarioTypes[i].prefix) + name;
+            break;
+        }
+    }
+    if (section_name.empty()) return;
+
+    // Check for duplicate
+    for (size_t i = 0; i < m_Ini.sections.size(); i++) {
+        if (m_Ini.sections[i].name == section_name) {
+            m_ErrorMsg = "A section named [" + section_name + "] already exists.";
+            return;
+        }
+    }
+
+    Section sec;
+    sec.name = section_name;
+    sec.section_type = type;
+    // Add a default Enable=false key
+    Line default_line;
+    default_line.type = Line_KeyValue;
+    default_line.key_entry.key = "Enable";
+    default_line.key_entry.value = "false";
+    sec.lines.push_back(default_line);
+
+    m_Ini.sections.push_back(sec);
+    m_SelectedSection = (int)m_Ini.sections.size() - 1;
+    MarkDirty();
+}
+
+void ConfigEditor::CloneScenario(int section_idx, const std::string& new_name)
+{
+    if (section_idx < 0 || section_idx >= (int)m_Ini.sections.size()) return;
+
+    const Section& src = m_Ini.sections[section_idx];
+
+    // Determine prefix from source type
+    std::string section_name;
+    for (int i = 0; i < g_NumScenarioTypes; i++) {
+        if (g_ScenarioTypes[i].type == src.section_type) {
+            section_name = std::string(g_ScenarioTypes[i].prefix) + new_name;
+            break;
+        }
+    }
+    // For non-scenario types (PerfConfig, MDM, DSTS), just use the name directly
+    if (section_name.empty()) {
+        section_name = new_name;
+    }
+
+    // Check for duplicate
+    for (size_t i = 0; i < m_Ini.sections.size(); i++) {
+        if (m_Ini.sections[i].name == section_name) {
+            m_ErrorMsg = "A section named [" + section_name + "] already exists.";
+            return;
+        }
+    }
+
+    // Deep copy
+    Section cloned = src;
+    cloned.name = section_name;
+
+    // Insert right after the source section
+    m_Ini.sections.insert(m_Ini.sections.begin() + section_idx + 1, cloned);
+    m_SelectedSection = section_idx + 1;
+    MarkDirty();
+}
+
+void ConfigEditor::RenameScenario(int section_idx, const std::string& new_name)
+{
+    if (section_idx < 0 || section_idx >= (int)m_Ini.sections.size()) return;
+
+    Section& sec = m_Ini.sections[section_idx];
+
+    // Build new full section name
+    std::string section_name;
+    for (int i = 0; i < g_NumScenarioTypes; i++) {
+        if (g_ScenarioTypes[i].type == sec.section_type) {
+            section_name = std::string(g_ScenarioTypes[i].prefix) + new_name;
+            break;
+        }
+    }
+    // For non-scenario types, just use the name directly
+    if (section_name.empty()) {
+        section_name = new_name;
+    }
+
+    // Check for duplicate (but not self)
+    for (size_t i = 0; i < m_Ini.sections.size(); i++) {
+        if ((int)i != section_idx && m_Ini.sections[i].name == section_name) {
+            m_ErrorMsg = "A section named [" + section_name + "] already exists.";
+            return;
+        }
+    }
+
+    sec.name = section_name;
+    MarkDirty();
+}
+
+void ConfigEditor::DeleteScenario(int section_idx)
+{
+    if (section_idx < 0 || section_idx >= (int)m_Ini.sections.size()) return;
+
+    m_Ini.sections.erase(m_Ini.sections.begin() + section_idx);
+
+    // Fix selection
+    if (m_SelectedSection == section_idx) {
+        m_SelectedSection = -1;
+        m_SelectedLine = -1;
+    } else if (m_SelectedSection > section_idx) {
+        m_SelectedSection--;
+    }
+
+    // Cancel any active edit
+    m_EditActive = false;
+    MarkDirty();
+}
+
+// --- Key Operations ---
+
+void ConfigEditor::AddKey(int section_idx)
+{
+    if (section_idx < 0 || section_idx >= (int)m_Ini.sections.size()) return;
+
+    Section& sec = m_Ini.sections[section_idx];
+
+    Line new_line;
+    new_line.type = Line_KeyValue;
+    new_line.key_entry.key = "NewKey";
+    new_line.key_entry.value = "";
+
+    sec.lines.push_back(new_line);
+    MarkDirty();
+
+    // Start editing the new key's key column
+    int new_line_idx = (int)sec.lines.size() - 1;
+    m_EditSection = section_idx;
+    m_EditLine = new_line_idx;
+    m_EditColumn = 1; // key column
+    m_EditActive = true;
+    m_EditFocusNeeded = true;
+    snprintf(m_EditBuf, sizeof(m_EditBuf), "NewKey");
+}
+
+void ConfigEditor::AddConditionalKey(int section_idx)
+{
+    if (section_idx < 0 || section_idx >= (int)m_Ini.sections.size()) return;
+
+    Section& sec = m_Ini.sections[section_idx];
+
+    Line new_line;
+    new_line.type = Line_KeyValue;
+    new_line.key_entry.key = "NewKey";
+    new_line.key_entry.value = "";
+    // Add a placeholder condition
+    Condition cond;
+    cond.scope_type = Scope_Cluster;
+    cond.scope_value = "ClusterName";
+    new_line.key_entry.conditions.push_back(cond);
+
+    sec.lines.push_back(new_line);
+    MarkDirty();
+
+    // Start editing the conditions column
+    int new_line_idx = (int)sec.lines.size() - 1;
+    m_EditSection = section_idx;
+    m_EditLine = new_line_idx;
+    m_EditColumn = 0; // conditions column
+    m_EditActive = true;
+    m_EditFocusNeeded = true;
+    snprintf(m_EditBuf, sizeof(m_EditBuf), "Cluster:ClusterName");
+}
+
+void ConfigEditor::DeleteKey(int section_idx, int line_idx)
+{
+    if (section_idx < 0 || section_idx >= (int)m_Ini.sections.size()) return;
+    Section& sec = m_Ini.sections[section_idx];
+    if (line_idx < 0 || line_idx >= (int)sec.lines.size()) return;
+
+    sec.lines.erase(sec.lines.begin() + line_idx);
+
+    // Cancel any active edit on this line
+    if (m_EditActive && m_EditSection == section_idx && m_EditLine == line_idx) {
+        m_EditActive = false;
+    }
+    // Adjust edit line index if needed
+    if (m_EditActive && m_EditSection == section_idx && m_EditLine > line_idx) {
+        m_EditLine--;
+    }
+
+    // Adjust selected line
+    if (m_SelectedLine == line_idx) {
+        m_SelectedLine = -1;
+    } else if (m_SelectedLine > line_idx) {
+        m_SelectedLine--;
+    }
+
+    MarkDirty();
+}
+
+// --- Dialog Rendering ---
+
+void ConfigEditor::RenderNewScenarioDialog()
+{
+    if (!m_ShowNewScenarioDlg) return;
+
+    ImGui::OpenPopup("New Scenario");
+    if (ImGui::BeginPopupModal("New Scenario", &m_ShowNewScenarioDlg, ImGuiWindowFlags_AlwaysAutoResize)) {
+        ImGui::Text("Create a new scenario section.");
+        ImGui::Separator();
+
+        // Type combo
+        ImGui::Text("Type:");
+        ImGui::SameLine();
+        if (ImGui::BeginCombo("##ScenarioType", g_ScenarioTypes[m_NewScenarioType].label)) {
+            for (int i = 0; i < g_NumScenarioTypes; i++) {
+                bool selected = (m_NewScenarioType == i);
+                if (ImGui::Selectable(g_ScenarioTypes[i].label, selected))
+                    m_NewScenarioType = i;
+                if (selected)
+                    ImGui::SetItemDefaultFocus();
+            }
+            ImGui::EndCombo();
+        }
+
+        // Name input
+        ImGui::Text("Name:");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(300);
+        bool enter_pressed = ImGui::InputText("##ScenarioName", m_NewScenarioName, sizeof(m_NewScenarioName),
+            ImGuiInputTextFlags_EnterReturnsTrue);
+
+        // Preview of full section name
+        ImGui::TextDisabled("Section: [%s%s]", g_ScenarioTypes[m_NewScenarioType].prefix, m_NewScenarioName);
+
+        ImGui::Separator();
+
+        bool name_empty = (m_NewScenarioName[0] == '\0');
+        if (name_empty) ImGui::BeginDisabled();
+        if (ImGui::Button("Create", ImVec2(120, 0)) || (enter_pressed && !name_empty)) {
+            AddScenario(g_ScenarioTypes[m_NewScenarioType].type, m_NewScenarioName);
+            m_ShowNewScenarioDlg = false;
+            ImGui::CloseCurrentPopup();
+        }
+        if (name_empty) ImGui::EndDisabled();
+
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+            m_ShowNewScenarioDlg = false;
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
+}
+
+void ConfigEditor::RenderCloneScenarioDialog()
+{
+    if (!m_ShowCloneScenarioDlg) return;
+
+    ImGui::OpenPopup("Clone Scenario");
+    if (ImGui::BeginPopupModal("Clone Scenario", &m_ShowCloneScenarioDlg, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (m_CloneSourceIdx >= 0 && m_CloneSourceIdx < (int)m_Ini.sections.size()) {
+            const Section& src = m_Ini.sections[m_CloneSourceIdx];
+            ImGui::Text("Clone [%s] to a new scenario.", src.name.c_str());
+        }
+        ImGui::Separator();
+
+        ImGui::Text("New name:");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(300);
+        bool enter_pressed = ImGui::InputText("##CloneName", m_CloneNewName, sizeof(m_CloneNewName),
+            ImGuiInputTextFlags_EnterReturnsTrue);
+
+        // Preview
+        if (m_CloneSourceIdx >= 0 && m_CloneSourceIdx < (int)m_Ini.sections.size()) {
+            const Section& src = m_Ini.sections[m_CloneSourceIdx];
+            for (int i = 0; i < g_NumScenarioTypes; i++) {
+                if (g_ScenarioTypes[i].type == src.section_type) {
+                    ImGui::TextDisabled("New section: [%s%s]", g_ScenarioTypes[i].prefix, m_CloneNewName);
+                    break;
+                }
+            }
+        }
+
+        ImGui::Separator();
+
+        bool name_empty = (m_CloneNewName[0] == '\0');
+        if (name_empty) ImGui::BeginDisabled();
+        if (ImGui::Button("Clone", ImVec2(120, 0)) || (enter_pressed && !name_empty)) {
+            CloneScenario(m_CloneSourceIdx, m_CloneNewName);
+            m_ShowCloneScenarioDlg = false;
+            ImGui::CloseCurrentPopup();
+        }
+        if (name_empty) ImGui::EndDisabled();
+
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+            m_ShowCloneScenarioDlg = false;
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
+}
+
+void ConfigEditor::RenderRenameScenarioDialog()
+{
+    if (!m_ShowRenameScenarioDlg) return;
+
+    ImGui::OpenPopup("Rename Scenario");
+    if (ImGui::BeginPopupModal("Rename Scenario", &m_ShowRenameScenarioDlg, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (m_RenameTargetIdx >= 0 && m_RenameTargetIdx < (int)m_Ini.sections.size()) {
+            const Section& sec = m_Ini.sections[m_RenameTargetIdx];
+            ImGui::Text("Rename [%s]", sec.name.c_str());
+        }
+        ImGui::Separator();
+
+        ImGui::Text("New name:");
+        ImGui::SameLine();
+        ImGui::SetNextItemWidth(300);
+        bool enter_pressed = ImGui::InputText("##RenameName", m_RenameNewName, sizeof(m_RenameNewName),
+            ImGuiInputTextFlags_EnterReturnsTrue);
+
+        // Preview
+        if (m_RenameTargetIdx >= 0 && m_RenameTargetIdx < (int)m_Ini.sections.size()) {
+            const Section& sec = m_Ini.sections[m_RenameTargetIdx];
+            for (int i = 0; i < g_NumScenarioTypes; i++) {
+                if (g_ScenarioTypes[i].type == sec.section_type) {
+                    ImGui::TextDisabled("New section: [%s%s]", g_ScenarioTypes[i].prefix, m_RenameNewName);
+                    break;
+                }
+            }
+        }
+
+        ImGui::Separator();
+
+        bool name_empty = (m_RenameNewName[0] == '\0');
+        if (name_empty) ImGui::BeginDisabled();
+        if (ImGui::Button("Rename", ImVec2(120, 0)) || (enter_pressed && !name_empty)) {
+            RenameScenario(m_RenameTargetIdx, m_RenameNewName);
+            m_ShowRenameScenarioDlg = false;
+            ImGui::CloseCurrentPopup();
+        }
+        if (name_empty) ImGui::EndDisabled();
+
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+            m_ShowRenameScenarioDlg = false;
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
+}
+
+void ConfigEditor::RenderDeleteConfirmDialog()
+{
+    if (!m_ShowDeleteConfirmDlg) return;
+
+    ImGui::OpenPopup("Delete Section?");
+    if (ImGui::BeginPopupModal("Delete Section?", &m_ShowDeleteConfirmDlg, ImGuiWindowFlags_AlwaysAutoResize)) {
+        if (m_DeleteTargetIdx >= 0 && m_DeleteTargetIdx < (int)m_Ini.sections.size()) {
+            const Section& sec = m_Ini.sections[m_DeleteTargetIdx];
+            int kv_count = 0;
+            for (const auto& l : sec.lines)
+                if (l.type == Line_KeyValue) kv_count++;
+            ImGui::Text("Delete [%s]?", sec.name.c_str());
+            ImGui::Text("This section has %d key(s). This cannot be undone.", kv_count);
+        }
+        ImGui::Separator();
+
+        if (ImGui::Button("Delete", ImVec2(120, 0))) {
+            DeleteScenario(m_DeleteTargetIdx);
+            m_ShowDeleteConfirmDlg = false;
+            ImGui::CloseCurrentPopup();
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("Cancel", ImVec2(120, 0))) {
+            m_ShowDeleteConfirmDlg = false;
+            ImGui::CloseCurrentPopup();
+        }
+
+        ImGui::EndPopup();
+    }
+}
+
 void ConfigEditor::HandleKeyboardShortcuts()
 {
     ImGuiIO& io = ImGui::GetIO();
+
+    // Ctrl+S — Save
     if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_S) && m_HasFile) {
         std::string err;
         if (IniWriter::Save(m_Ini, err)) {
@@ -67,6 +495,34 @@ void ConfigEditor::HandleKeyboardShortcuts()
         } else {
             m_ErrorMsg = err;
         }
+    }
+
+    // Ctrl+N — New Scenario
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_N) && m_HasFile) {
+        m_ShowNewScenarioDlg = true;
+        m_NewScenarioType = 0;
+        memset(m_NewScenarioName, 0, sizeof(m_NewScenarioName));
+    }
+
+    // Ctrl+D — Clone/Duplicate Selected Scenario
+    if (io.KeyCtrl && ImGui::IsKeyPressed(ImGuiKey_D) && m_HasFile && m_SelectedSection >= 0) {
+        m_ShowCloneScenarioDlg = true;
+        m_CloneSourceIdx = m_SelectedSection;
+        memset(m_CloneNewName, 0, sizeof(m_CloneNewName));
+        // Pre-fill with source scenario name + "_copy"
+        std::string src_name = ExtractScenarioName(m_Ini.sections[m_SelectedSection].name);
+        snprintf(m_CloneNewName, sizeof(m_CloneNewName), "%s_copy", src_name.c_str());
+    }
+
+    // Ctrl+Shift+K — Add new key
+    if (io.KeyCtrl && io.KeyShift && ImGui::IsKeyPressed(ImGuiKey_K) && m_HasFile && m_SelectedSection >= 0) {
+        AddKey(m_SelectedSection);
+    }
+
+    // Delete — Delete selected key row
+    if (ImGui::IsKeyPressed(ImGuiKey_Delete) && m_HasFile && !m_EditActive &&
+        m_SelectedSection >= 0 && m_SelectedLine >= 0) {
+        DeleteKey(m_SelectedSection, m_SelectedLine);
     }
 }
 
@@ -176,6 +632,12 @@ void ConfigEditor::Render()
     RenderSectionTree();
     ImGui::SameLine();
     RenderKeyTable();
+
+    // --- Modal dialogs ---
+    RenderNewScenarioDialog();
+    RenderCloneScenarioDialog();
+    RenderRenameScenarioDialog();
+    RenderDeleteConfirmDialog();
 }
 
 // --- Left panel: Section tree grouped by type ---
@@ -247,6 +709,19 @@ void ConfigEditor::RenderSectionTree()
                 bool selected = (m_SelectedSection == (int)i);
                 if (ImGui::Selectable(m_Ini.sections[i].name.c_str(), selected)) {
                     m_SelectedSection = (int)i;
+                    m_SelectedLine = -1;
+                }
+
+                // Right-click context menu for single sections
+                if (ImGui::BeginPopupContextItem()) {
+                    if (ImGui::MenuItem("Clone...")) {
+                        m_ShowCloneScenarioDlg = true;
+                        m_CloneSourceIdx = (int)i;
+                        memset(m_CloneNewName, 0, sizeof(m_CloneNewName));
+                        std::string src_name = m_Ini.sections[i].name;
+                        snprintf(m_CloneNewName, sizeof(m_CloneNewName), "%s_copy", src_name.c_str());
+                    }
+                    ImGui::EndPopup();
                 }
             }
         } else {
@@ -270,11 +745,83 @@ void ConfigEditor::RenderSectionTree()
                     bool selected = (m_SelectedSection == (int)i);
                     if (ImGui::Selectable(scenario_name.c_str(), selected)) {
                         m_SelectedSection = (int)i;
+                        m_SelectedLine = -1;
+                    }
+
+                    // Right-click context menu for scenario sections
+                    if (ImGui::BeginPopupContextItem()) {
+                        if (ImGui::MenuItem("Rename...")) {
+                            m_ShowRenameScenarioDlg = true;
+                            m_RenameTargetIdx = (int)i;
+                            memset(m_RenameNewName, 0, sizeof(m_RenameNewName));
+                            std::string sname = ExtractScenarioName(m_Ini.sections[i].name);
+                            snprintf(m_RenameNewName, sizeof(m_RenameNewName), "%s", sname.c_str());
+                        }
+                        if (ImGui::MenuItem("Clone...")) {
+                            m_ShowCloneScenarioDlg = true;
+                            m_CloneSourceIdx = (int)i;
+                            memset(m_CloneNewName, 0, sizeof(m_CloneNewName));
+                            std::string sname = ExtractScenarioName(m_Ini.sections[i].name);
+                            snprintf(m_CloneNewName, sizeof(m_CloneNewName), "%s_copy", sname.c_str());
+                        }
+                        ImGui::Separator();
+                        if (ImGui::MenuItem("Delete...")) {
+                            m_ShowDeleteConfirmDlg = true;
+                            m_DeleteTargetIdx = (int)i;
+                        }
+                        ImGui::EndPopup();
                     }
                 }
                 ImGui::TreePop();
             }
         }
+    }
+
+    ImGui::Separator();
+
+    // --- Scenario operation buttons ---
+    {
+        bool has_selection = (m_SelectedSection >= 0 && m_SelectedSection < (int)m_Ini.sections.size());
+        bool selection_is_scenario = false;
+        if (has_selection) {
+            SectionType st = m_Ini.sections[m_SelectedSection].section_type;
+            selection_is_scenario = (st == Section_Producer || st == Section_GWProducer ||
+                                     st == Section_Consumer || st == Section_Reliable ||
+                                     st == Section_Rehydrate);
+        }
+
+        if (ImGui::Button("+ New Scenario", ImVec2(-1, 0))) {
+            m_ShowNewScenarioDlg = true;
+            m_NewScenarioType = 0;
+            memset(m_NewScenarioName, 0, sizeof(m_NewScenarioName));
+        }
+
+        if (!has_selection) ImGui::BeginDisabled();
+        if (ImGui::Button("Clone Selected", ImVec2(-1, 0))) {
+            m_ShowCloneScenarioDlg = true;
+            m_CloneSourceIdx = m_SelectedSection;
+            memset(m_CloneNewName, 0, sizeof(m_CloneNewName));
+            std::string sname = ExtractScenarioName(m_Ini.sections[m_SelectedSection].name);
+            snprintf(m_CloneNewName, sizeof(m_CloneNewName), "%s_copy", sname.c_str());
+        }
+        if (!has_selection) ImGui::EndDisabled();
+
+        if (!selection_is_scenario) ImGui::BeginDisabled();
+        if (ImGui::Button("Rename Selected", ImVec2(-1, 0))) {
+            m_ShowRenameScenarioDlg = true;
+            m_RenameTargetIdx = m_SelectedSection;
+            memset(m_RenameNewName, 0, sizeof(m_RenameNewName));
+            std::string sname = ExtractScenarioName(m_Ini.sections[m_SelectedSection].name);
+            snprintf(m_RenameNewName, sizeof(m_RenameNewName), "%s", sname.c_str());
+        }
+        if (!selection_is_scenario) ImGui::EndDisabled();
+
+        if (!selection_is_scenario) ImGui::BeginDisabled();
+        if (ImGui::Button("Delete Selected", ImVec2(-1, 0))) {
+            m_ShowDeleteConfirmDlg = true;
+            m_DeleteTargetIdx = m_SelectedSection;
+        }
+        if (!selection_is_scenario) ImGui::EndDisabled();
     }
 
     ImGui::EndChild();
@@ -381,12 +928,18 @@ void ConfigEditor::RenderKeyTable()
         ImGuiTableFlags_BordersInnerV |
         ImGuiTableFlags_SizingStretchProp;
 
-    if (ImGui::BeginTable("KeyValueTable", 3, table_flags)) {
+    // Reserve space at the bottom for buttons and stats
+    float footer_height = ImGui::GetFrameHeightWithSpacing() * 2 + ImGui::GetStyle().ItemSpacing.y;
+
+    if (ImGui::BeginTable("KeyValueTable", 3, table_flags, ImVec2(0, -footer_height))) {
         ImGui::TableSetupColumn("Conditions", ImGuiTableColumnFlags_WidthStretch, 0.3f);
         ImGui::TableSetupColumn("Key", ImGuiTableColumnFlags_WidthStretch, 0.25f);
         ImGui::TableSetupColumn("Value", ImGuiTableColumnFlags_WidthStretch, 0.45f);
         ImGui::TableSetupScrollFreeze(0, 1);
         ImGui::TableHeadersRow();
+
+        // Track which line to delete (via right-click context menu)
+        int line_to_delete = -1;
 
         for (size_t i = 0; i < section.lines.size(); i++) {
             Line& line = section.lines[i];
@@ -408,6 +961,7 @@ void ConfigEditor::RenderKeyTable()
 
             // Line_KeyValue — editable row
             KeyEntry& entry = line.key_entry;
+            bool is_selected_line = (m_SelectedLine == (int)i);
 
             ImGui::PushID((int)i);
             ImGui::TableNextRow();
@@ -451,7 +1005,11 @@ void ConfigEditor::RenderKeyTable()
                     const char* display = entry.conditions.empty() ? "(none)" : cond_str.c_str();
                     if (entry.conditions.empty())
                         ImGui::PushStyleColor(ImGuiCol_Text, ImGui::GetStyleColorVec4(ImGuiCol_TextDisabled));
-                    if (ImGui::Selectable(display, false, ImGuiSelectableFlags_AllowDoubleClick)) {
+
+                    ImGuiSelectableFlags sel_flags = ImGuiSelectableFlags_AllowDoubleClick |
+                                                     ImGuiSelectableFlags_SpanAllColumns;
+                    if (ImGui::Selectable(display, is_selected_line, sel_flags)) {
+                        m_SelectedLine = (int)i;
                         if (ImGui::IsMouseDoubleClicked(0)) {
                             m_EditSection = m_SelectedSection;
                             m_EditLine = (int)i;
@@ -501,6 +1059,7 @@ void ConfigEditor::RenderKeyTable()
                     }
                 } else {
                     if (ImGui::Selectable(entry.key.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
+                        m_SelectedLine = (int)i;
                         if (ImGui::IsMouseDoubleClicked(0)) {
                             m_EditSection = m_SelectedSection;
                             m_EditLine = (int)i;
@@ -547,6 +1106,7 @@ void ConfigEditor::RenderKeyTable()
                     }
                 } else {
                     if (ImGui::Selectable(entry.value.c_str(), false, ImGuiSelectableFlags_AllowDoubleClick)) {
+                        m_SelectedLine = (int)i;
                         if (ImGui::IsMouseDoubleClicked(0)) {
                             m_EditSection = m_SelectedSection;
                             m_EditLine = (int)i;
@@ -559,10 +1119,71 @@ void ConfigEditor::RenderKeyTable()
                 }
             }
 
+            // Right-click context menu for rows
+            if (ImGui::BeginPopupContextItem("##rowctx")) {
+                m_SelectedLine = (int)i;
+                if (ImGui::MenuItem("Edit Conditions")) {
+                    m_EditSection = m_SelectedSection;
+                    m_EditLine = (int)i;
+                    m_EditColumn = 0;
+                    m_EditActive = true;
+                    m_EditFocusNeeded = true;
+                    std::string cond_str = FormatConditions(entry.conditions);
+                    snprintf(m_EditBuf, sizeof(m_EditBuf), "%s", cond_str.c_str());
+                }
+                if (ImGui::MenuItem("Edit Key")) {
+                    m_EditSection = m_SelectedSection;
+                    m_EditLine = (int)i;
+                    m_EditColumn = 1;
+                    m_EditActive = true;
+                    m_EditFocusNeeded = true;
+                    snprintf(m_EditBuf, sizeof(m_EditBuf), "%s", entry.key.c_str());
+                }
+                if (ImGui::MenuItem("Edit Value")) {
+                    m_EditSection = m_SelectedSection;
+                    m_EditLine = (int)i;
+                    m_EditColumn = 2;
+                    m_EditActive = true;
+                    m_EditFocusNeeded = true;
+                    snprintf(m_EditBuf, sizeof(m_EditBuf), "%s", entry.value.c_str());
+                }
+                ImGui::Separator();
+                if (ImGui::MenuItem("Delete Key")) {
+                    line_to_delete = (int)i;
+                }
+                ImGui::EndPopup();
+            }
+
             ImGui::PopID();
         }
 
         ImGui::EndTable();
+
+        // Apply deferred delete (outside the table iteration)
+        if (line_to_delete >= 0) {
+            DeleteKey(m_SelectedSection, line_to_delete);
+        }
+    }
+
+    // --- Key operation buttons ---
+    {
+        if (ImGui::Button("+ Add Key")) {
+            AddKey(m_SelectedSection);
+        }
+        ImGui::SameLine();
+        if (ImGui::Button("+ Add Conditional")) {
+            AddConditionalKey(m_SelectedSection);
+        }
+        ImGui::SameLine();
+
+        bool has_line_selection = (m_SelectedLine >= 0 &&
+            m_SelectedLine < (int)section.lines.size() &&
+            section.lines[m_SelectedLine].type == Line_KeyValue);
+        if (!has_line_selection) ImGui::BeginDisabled();
+        if (ImGui::Button("Delete Key")) {
+            DeleteKey(m_SelectedSection, m_SelectedLine);
+        }
+        if (!has_line_selection) ImGui::EndDisabled();
     }
 
     // Footer with stats
